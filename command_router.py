@@ -49,27 +49,56 @@ def _find_app(command: str):
 
 
 def _route_app(command: str):
-    """Програми мають пріоритет над сайтами."""
     app_name = _find_app(command)
     if not app_name:
         return None
-
     if _starts_with(command, CLOSE_WORDS):
         return {"action": "close_app", "target": app_name}
-
     if _starts_with(command, OPEN_WORDS):
         return {"action": "open_app", "target": app_name}
-
     return None
 
 
 def _route_site(command: str):
     if not _starts_with(command, OPEN_WORDS):
         return None
-
     for name, url in sorted(SITES.items(), key=lambda item: len(item[0]), reverse=True):
         if name in command:
             return {"action": "open_url", "target": url}
+    return None
+
+
+def _route_file(command: str):
+    file_prefixes = (
+        ("знайди файл ", "find_file"),
+        ("знайти файл ", "find_file"),
+        ("пошукай файл ", "find_file"),
+        ("пошук файлу ", "find_file"),
+        ("відкрий файл ", "open_file"),
+        ("відкрити файл ", "open_file"),
+        ("запусти файл ", "open_file"),
+        ("видали файл ", "delete_file"),
+        ("видалити файл ", "delete_file"),
+        ("знищ файл ", "delete_file"),
+    )
+    for prefix, action in file_prefixes:
+        if command.startswith(prefix):
+            name = command[len(prefix):].strip()
+            if name:
+                return {"action": action, "target": name}
+
+    folder_prefixes = (
+        "відкрий папку ",
+        "відкрити папку ",
+        "знайди папку ",
+        "знайти папку ",
+    )
+    for prefix in folder_prefixes:
+        if command.startswith(prefix):
+            name = command[len(prefix):].strip()
+            if name:
+                return {"action": "find_folder", "target": name}
+
     return None
 
 
@@ -77,29 +106,14 @@ def _route_volume(command: str):
     match = re.search(r"(?:звук|гучність|громкость)\s*(?:на|до)?\s*(\d{1,3})", command)
     if match:
         return {"action": "set_volume", "target": str(max(0, min(100, int(match.group(1)))))}
-
-    if any(p in command for p in (
-        "зроби голосніше", "зроби гучніше", "збільш звук", "додай гучності",
-        "прибавь звук", "голосніше", "гучніше"
-    )):
+    if any(p in command for p in ("зроби голосніше", "зроби гучніше", "збільш звук", "додай гучності", "прибавь звук", "голосніше", "гучніше")):
         return {"action": "volume_up", "target": ""}
-
-    if any(p in command for p in (
-        "зроби тихіше", "зменш звук", "зменш гучність", "прибери гучність",
-        "убавь звук", "тихіше"
-    )):
+    if any(p in command for p in ("зроби тихіше", "зменш звук", "зменш гучність", "прибери гучність", "убавь звук", "тихіше")):
         return {"action": "volume_down", "target": ""}
-
-    if any(p in command for p in (
-        "вимкни звук", "выключи звук", "заглуши звук", "приглуши звук", "mute"
-    )):
+    if any(p in command for p in ("вимкни звук", "выключи звук", "заглуши звук", "приглуши звук", "mute")):
         return {"action": "mute", "target": ""}
-
-    if any(p in command for p in (
-        "увімкни звук", "включи звук", "поверни звук", "unmute"
-    )):
+    if any(p in command for p in ("увімкни звук", "включи звук", "поверни звук", "unmute")):
         return {"action": "unmute", "target": ""}
-
     return None
 
 
@@ -107,7 +121,6 @@ def _route_music(command: str):
     music_words = ("музику", "музика", "music")
     if not any(word in command for word in music_words):
         return None
-
     if _starts_with(command, OPEN_WORDS):
         return {"action": "play_music", "target": ""}
     return None
@@ -124,34 +137,25 @@ def _route_search(command: str):
 
 
 def _route_system(command: str):
-    if command in (
-        "вимкни комп", "вимкни комп'ютер", "вимкни пк",
-        "выключи компьютер", "выключи пк", "вимкни машину"
-    ):
+    if command in ("вимкни комп", "вимкни комп'ютер", "вимкни пк", "выключи компьютер", "выключи пк", "вимкни машину"):
         return {"action": "shutdown", "target": ""}
-
-    if command in (
-        "перезавантаж комп", "перезавантаж комп'ютер", "перезавантаж пк",
-        "перезапусти пк", "перезагрузи компьютер", "перезагрузи пк", "restart"
-    ):
+    if command in ("перезавантаж комп", "перезавантаж комп'ютер", "перезавантаж пк", "перезапусти пк", "перезагрузи компьютер", "перезагрузи пк", "restart"):
         return {"action": "restart", "target": ""}
-
     return None
 
 
 def route(command: str, context=None):
     if not command:
         return None
-
     normalized = normalize(command)
     if not normalized:
         return None
 
-    # Програма -> сайт -> звук -> музика -> пошук -> система.
-    # Discord тепер відкривається як локальна програма, а YouTube залишається сайтом.
+    # Програми -> сайти -> файли -> звук -> музика -> пошук -> система.
     for handler in (
         _route_app,
         _route_site,
+        _route_file,
         _route_volume,
         _route_music,
         _route_search,
