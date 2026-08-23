@@ -8,8 +8,7 @@ def normalize(text: str) -> str:
         return ""
     text = str(text).lower().strip()
     text = text.replace("ё", "е").replace("’", "'").replace("`", "'")
-    text = re.sub(r"\s+", " ", text)
-    return text
+    return re.sub(r"\s+", " ", text)
 
 
 OPEN_WORDS = (
@@ -49,6 +48,11 @@ def _find_app(command: str):
 
 
 def _route_app(command: str):
+    # Не перехоплюємо складені команди на кшталт:
+    # "відкрий Chrome, напиши привіт".
+    if "," in command or " потім " in command or " і " in command:
+        return None
+
     app_name = _find_app(command)
     if not app_name:
         return None
@@ -61,6 +65,8 @@ def _route_app(command: str):
 
 def _route_site(command: str):
     if not _starts_with(command, OPEN_WORDS):
+        return None
+    if "," in command or " потім " in command or " і " in command:
         return None
     for name, url in sorted(SITES.items(), key=lambda item: len(item[0]), reverse=True):
         if name in command:
@@ -95,7 +101,6 @@ def _route_file(command: str):
             name = command[len(prefix):].strip()
             if name:
                 return {"action": "find_folder", "target": name}
-
     return None
 
 
@@ -114,47 +119,72 @@ def _route_volume(command: str):
     return None
 
 
-def _route_music(command: str):
-    music_words = ("музику", "музика", "music")
-    if not any(word in command for word in music_words):
-        return None
-    if _starts_with(command, OPEN_WORDS):
-        return {"action": "play_music", "target": ""}
-    return None
+def _number_from_word(word: str):
+    numbers = {
+        "сто": 100, "стo": 100, "двісті": 200, "двісти": 200,
+        "триста": 300, "чотириста": 400, "п'ятсот": 500, "пятсот": 500,
+        "шістсот": 600, "шестсот": 600, "сімсот": 700, "семьсот": 700,
+        "вісімсот": 800, "восемьсот": 800, "дев'ятсот": 900, "девятсот": 900,
+    }
+    return numbers.get(word)
+
+
+def _parse_xy(command: str):
+    # Підтримує цифри та базові слова: "п'ятсот 300", "500 300".
+    tokens = re.findall(r"\d{1,5}|[а-яіїєґ']+", command)
+    values = []
+    for token in tokens:
+        if token.isdigit():
+            values.append(int(token))
+        else:
+            number = _number_from_word(token)
+            if number is not None:
+                values.append(number)
+        if len(values) == 2:
+            break
+    return values if len(values) == 2 else None
 
 
 def _route_computer(command: str):
-    if command in ("зроби скріншот", "зроби знімок екрана", "скріншот", "скриншот"):
+    if "скріншот" in command or "скриншот" in command:
         return {"action": "screenshot", "target": ""}
 
-    if command in ("покажи координати миші", "де мишка", "позиція миші"):
+    if "координат" in command and "миш" in command:
         return {"action": "mouse_position", "target": ""}
 
-    match = re.search(r"(?:перемісти|пересунь) (?:мишку|мишу) на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
-    if match:
-        return {"action": "mouse_move", "target": f"{match.group(1)} {match.group(2)}"}
+    if any(word in command for word in ("перемісти миш", "перемісти курсор", "посунь миш", "посунь курсор")):
+        xy = _parse_xy(command)
+        if xy:
+            return {"action": "mouse_move", "target": f"{xy[0]} {xy[1]}"}
 
-    match = re.search(r"(?:клікни|натисни кнопкою) на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
-    if match:
-        return {"action": "click", "target": f"{match.group(1)} {match.group(2)}"}
+    if any(word in command for word in ("двічі клікни", "двойной клик", "подвійний клік")):
+        xy = _parse_xy(command)
+        if xy:
+            return {"action": "double_click", "target": f"{xy[0]} {xy[1]}"}
 
-    match = re.search(r"двічі клікни на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
-    if match:
-        return {"action": "double_click", "target": f"{match.group(1)} {match.group(2)}"}
+    if any(word in command for word in ("клікни", "кликни", "натисни мишкою", "натисни мишею")):
+        xy = _parse_xy(command)
+        if xy:
+            return {"action": "click", "target": f"{xy[0]} {xy[1]}"}
 
-    for prefix in ("напиши ", "введи "):
-        if command.startswith(prefix):
-            text = command[len(prefix):].strip()
-            if text:
-                return {"action": "type_text", "target": text}
+    if any(word in command for word in ("напиши ", "введи ")):
+        for prefix in ("напиши ", "введи "):
+            if command.startswith(prefix):
+                text = command[len(prefix):].strip()
+                if text:
+                    return {"action": "type_text", "target": text}
 
     if command.startswith("натисни "):
-        key = command[len("натисни "):].strip()
-        if key:
-            if "+" in key:
-                return {"action": "hotkey", "target": key}
-            return {"action": "press_key", "target": key}
+        return {"action": "press_key", "target": command[len("натисни "):].strip()}
 
+    return None
+
+
+def _route_music(command: str):
+    if not any(word in command for word in ("музику", "музика", "music")):
+        return None
+    if _starts_with(command, OPEN_WORDS):
+        return {"action": "play_music", "target": ""}
     return None
 
 
@@ -187,9 +217,9 @@ def route(command: str, context=None):
         _route_app,
         _route_site,
         _route_file,
+        _route_computer,
         _route_volume,
         _route_music,
-        _route_computer,
         _route_search,
         _route_system,
     ):
