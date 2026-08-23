@@ -29,6 +29,8 @@ ALLOWED_ACTIONS = {
     "open_app", "close_app", "play_music", "play_video",
     "open_video_result", "find_content", "open_url", "web_search",
     "find_file", "open_file", "find_folder", "open_path", "delete_file",
+    "screenshot", "mouse_move", "click", "double_click", "type_text",
+    "press_key", "hotkey", "mouse_position",
     "analyze_memory", "set_volume", "volume_up", "volume_down", "mute", "unmute",
     "shutdown", "restart", "stop", "chat", "unknown",
 }
@@ -51,8 +53,10 @@ target завжди рядок.
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
 find_content, open_url, web_search, find_file, open_file, find_folder,
-open_path, delete_file, analyze_memory, set_volume, volume_up, volume_down,
-mute, unmute, shutdown, restart, stop, chat, unknown
+open_path, delete_file, screenshot, mouse_move, click, double_click,
+type_text, press_key, hotkey, mouse_position, analyze_memory,
+set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
+stop, chat, unknown
 
 ПРОГРАМИ:
 "відкрий Steam" -> open_app / "steam"
@@ -65,8 +69,6 @@ mute, unmute, shutdown, restart, stop, chat, unknown
 YOUTUBE:
 play_video ТІЛЬКИ коли користувач явно каже YouTube/ютуб, "на YouTube", "відео"
 або просить саме відео.
-"відкрий Рік і Морті на YouTube" -> play_video / "Рік і Морті"
-"знайди відео про космос" -> play_video / "космос"
 
 ФІЛЬМИ, СЕРІАЛИ, ШОУ, АНІМЕ:
 Якщо користувач хоче знайти, подивитися, запустити або включити названий контент,
@@ -78,13 +80,25 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 "знайди папку Downloads" -> find_folder / "Downloads"
 "видали файл test.txt" -> delete_file / "test.txt"
 
-Файлові дії локально бажані, якщо команда однозначна. Не вигадуй повні шляхи.
+ЕКРАН І КЛАВІАТУРА:
+"зроби скріншот" -> screenshot / ""
+"зроби знімок екрана" -> screenshot / ""
+"покажи координати миші" -> mouse_position / ""
+"перемісти мишку на 500 300" -> mouse_move / "500 300"
+"клікни на 500 300" -> click / "500 300"
+"двічі клікни на 500 300" -> double_click / "500 300"
+"напиши Привіт" -> type_text / "Привіт"
+"введи Привіт" -> type_text / "Привіт"
+"натисни Enter" -> press_key / "enter"
+"натисни Ctrl+L" -> hotkey / "ctrl+l"
+
+Координатні mouse/click дії використовуй тільки коли користувач явно дав координати.
+Не вигадуй координати.
 
 FOLLOW-UP:
 Контекст є частиною поточного діалогу.
 Якщо користувач каже "його", "її", "там", "перше", "друге", "відкрий це",
 визначай посилання на попередній результат.
-Не вигадуй нову назву, якщо її можна взяти з context.
 
 WEB SEARCH:
 Актуальна інформація, новини, погода, курс, ціни -> web_search.
@@ -101,8 +115,7 @@ CHAT:
 
 ВАЖЛИВО:
 Не виконуй дію самостійно. Тільки класифікуй команду.
-Не вважай стару команду новою дією.
-"target" має містити тільки потрібну назву або параметр.
+"target" має містити тільки потрібний параметр.
 """
 
 
@@ -111,12 +124,7 @@ def _parse_command(command: str, context=None):
         print("[brain] OpenAI client недоступний.")
         return {"action": "unknown", "target": ""}
 
-    context = context or []
-
-    payload = {
-        "command": command.strip(),
-        "context": context,
-    }
+    payload = {"command": command.strip(), "context": context or []}
 
     try:
         response = client.responses.create(
@@ -124,7 +132,6 @@ def _parse_command(command: str, context=None):
             instructions=SYSTEM_PROMPT,
             input=json.dumps(payload, ensure_ascii=False),
         )
-
         raw = response.output_text.strip()
         print(f"[brain] GPT raw: {raw}")
 
@@ -136,12 +143,9 @@ def _parse_command(command: str, context=None):
 
         action = data.get("action", "unknown")
         target = str(data.get("target", "") or "").strip()
-
         if action not in ALLOWED_ACTIONS:
             action = "unknown"
-
         return {"action": action, "target": target}
-
     except Exception as e:
         print(f"[brain] GPT parser error: {e}")
         return {"action": "unknown", "target": ""}
@@ -157,10 +161,8 @@ def handle(command: str, context=None):
 
     print("[brain] Передаю команду GPT...")
     parsed = _parse_command(command.strip(), context=context or [])
-
     _last_action = parsed["action"]
     _last_target = parsed["target"]
-
     print(f"[brain] Intent: {_last_action}")
     print(f"[brain] Target: {_last_target}")
     return parsed
