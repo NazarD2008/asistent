@@ -123,13 +123,13 @@ def play_music(query: str = "") -> str:
         return "Не вдалося відкрити YouTube Music."
 
 
-def _bing_first_result(query: str):
-    """Повертає перший зовнішній результат Bing."""
+def _google_first_result(query: str):
+    """Повертає перший нормальний результат Google."""
     try:
         import requests
         from html import unescape
 
-        url = "https://www.bing.com/search?q=" + urllib.parse.quote(query)
+        url = "https://www.google.com/search?q=" + urllib.parse.quote(query)
         response = requests.get(
             url,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36"},
@@ -138,40 +138,41 @@ def _bing_first_result(query: str):
         response.raise_for_status()
         html = response.text
 
-        blocks = re.findall(r'<li[^>]+class=["\']b_algo["\'][\s\S]*?</li>', html, re.I)
-        for block in blocks:
-            match = re.search(r'<a[^>]+href=["\'](https?://[^"\']+)', block, re.I)
-            if match:
-                candidate = unescape(match.group(1))
-                if "bing.com" not in candidate.lower():
-                    return candidate
+        candidates = re.findall(r'href="(?:/url\?q=)?(https?://[^"&]+)', html)
+        blocked = ("google.com", "googleusercontent.com", "gstatic.com", "youtube.com")
+        for candidate in candidates:
+            candidate = unescape(candidate)
+            low = candidate.lower()
+            if any(domain in low for domain in blocked):
+                continue
+            return candidate
     except Exception as e:
-        print(f"[browser] Bing first-result error: {e}")
+        print(f"[browser] Google first-result error: {e}")
     return None
 
 
 def find_content(query: str = "") -> str:
-    """Шукає фільм/серіал і відкриває перший нормальний результат."""
+    """Шукає фільм/серіал через Google і відкриває перший результат."""
     query = str(query or "").strip()
     if not query:
         return "Не вказано назву контенту."
 
     print(f"[browser] Пошук контенту: {query}")
     search_query = f"{query} дивитись онлайн"
-    result_url = _bing_first_result(search_query)
+    result_url = _google_first_result(search_query)
 
     if result_url:
         try:
             webbrowser.open_new_tab(result_url)
-            print(f"[browser] Bing first result: {result_url}")
+            print(f"[browser] Google first result: {result_url}")
             return f"Знайшов {query}. Відкриваю перший результат."
         except Exception as e:
             print(f"[browser] Помилка відкриття результату: {e}")
 
-    search_url = "https://www.bing.com/search?q=" + urllib.parse.quote(search_query)
+    google_url = "https://www.google.com/search?q=" + urllib.parse.quote(search_query)
     try:
-        webbrowser.open_new_tab(search_url)
-        print(f"[browser] Bing fallback: {search_url}")
+        webbrowser.open_new_tab(google_url)
+        print(f"[browser] Google fallback: {google_url}")
         return f"Відкриваю пошук для {query}."
     except Exception:
         return "Не вдалося виконати пошук контенту."
