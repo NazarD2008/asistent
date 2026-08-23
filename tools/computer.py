@@ -1,16 +1,19 @@
 """JARVIS computer control tools for Windows."""
 
-import ctypes
 import os
 import tempfile
 import time
-from ctypes import wintypes
 from datetime import datetime
 
 try:
     import pyautogui
 except ImportError:
     pyautogui = None
+
+try:
+    import pyperclip
+except ImportError:
+    pyperclip = None
 
 try:
     import psutil
@@ -84,136 +87,36 @@ def double_click(x: int | None = None, y: int | None = None) -> str:
     return "Подвійний клік виконано."
 
 
-# ============================================================
-# WINDOWS UNICODE INPUT
-# ============================================================
-
-if os.name == "nt":
-    ULONG_PTR = wintypes.WPARAM
-
-    class KEYBDINPUT(ctypes.Structure):
-        _fields_ = [
-            ("wVk", wintypes.WORD),
-            ("wScan", wintypes.WORD),
-            ("dwFlags", wintypes.DWORD),
-            ("time", wintypes.DWORD),
-            ("dwExtraInfo", ULONG_PTR),
-        ]
-
-    class INPUT_UNION(ctypes.Union):
-        _fields_ = [("ki", KEYBDINPUT)]
-
-    class INPUT(ctypes.Structure):
-        _anonymous_ = ("u",)
-        _fields_ = [
-            ("type", wintypes.DWORD),
-            ("u", INPUT_UNION),
-        ]
-
-    _user32 = ctypes.windll.user32
-    _user32.SendInput.argtypes = (
-        wintypes.UINT,
-        ctypes.POINTER(INPUT),
-        ctypes.c_int,
-    )
-    _user32.SendInput.restype = wintypes.UINT
-
-    _INPUT_KEYBOARD = 1
-    _KEYEVENTF_KEYUP = 0x0002
-    _KEYEVENTF_UNICODE = 0x0004
-
-
-def _send_unicode_text(text: str):
-    """Надсилає Unicode-символи напряму Windows без clipboard."""
-    if os.name != "nt":
-        raise RuntimeError("Unicode SendInput доступний тільки у Windows.")
-
-    inputs = []
-    for char in str(text):
-        codepoint = ord(char)
-
-        # BMP-символи
-        if codepoint <= 0xFFFF:
-            inputs.append(
-                INPUT(
-                    type=_INPUT_KEYBOARD,
-                    u=INPUT_UNION(
-                        ki=KEYBDINPUT(
-                            wVk=0,
-                            wScan=codepoint,
-                            dwFlags=_KEYEVENTF_UNICODE,
-                            time=0,
-                            dwExtraInfo=0,
-                        )
-                    ),
-                )
-            )
-            inputs.append(
-                INPUT(
-                    type=_INPUT_KEYBOARD,
-                    u=INPUT_UNION(
-                        ki=KEYBDINPUT(
-                            wVk=0,
-                            wScan=codepoint,
-                            dwFlags=_KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP,
-                            time=0,
-                            dwExtraInfo=0,
-                        )
-                    ),
-                )
-            )
-        else:
-            # Windows Unicode input для символів поза BMP через UTF-16 surrogate pair.
-            codepoint -= 0x10000
-            high = 0xD800 + ((codepoint >> 10) & 0x3FF)
-            low = 0xDC00 + (codepoint & 0x3FF)
-            for unit in (high, low):
-                inputs.append(
-                    INPUT(
-                        type=_INPUT_KEYBOARD,
-                        u=INPUT_UNION(
-                            ki=KEYBDINPUT(
-                                wVk=0,
-                                wScan=unit,
-                                dwFlags=_KEYEVENTF_UNICODE,
-                                time=0,
-                                dwExtraInfo=0,
-                            )
-                        ),
-                    )
-                )
-                inputs.append(
-                    INPUT(
-                        type=_INPUT_KEYBOARD,
-                        u=INPUT_UNION(
-                            ki=KEYBDINPUT(
-                                wVk=0,
-                                wScan=unit,
-                                dwFlags=_KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP,
-                                time=0,
-                                dwExtraInfo=0,
-                            )
-                        ),
-                    )
-                )
-
-    if inputs:
-        array = (INPUT * len(inputs))(*inputs)
-        sent = _user32.SendInput(len(inputs), array, ctypes.sizeof(INPUT))
-        if sent != len(inputs):
-            raise RuntimeError(f"Windows SendInput ввів лише {sent} з {len(inputs)} подій.")
-
-
 def type_text(text: str, interval: float = 0.01) -> str:
+    """Надійне введення Unicode через системний clipboard."""
+    _require_pyautogui()
+    if pyperclip is None:
+        return "Не вдалося ввести текст: pyperclip не встановлений."
+
     value = str(text)
+    if not value:
+        return "Порожній текст."
+
     try:
-        _send_unicode_text(value)
+        pyperclip.copy(value)
+        time.sleep(0.2)
+
+        # Повторюємо вставку, бо нове вікно може ще не приймати
+        # першу клавіатурну подію після зміни focus.
+        for attempt in range(3):
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.25)
+
+            # Не перевіряємо clipboard як ознаку успішної вставки:
+            # він природно залишиться рівним value навіть при невдалій вставці.
+            if attempt < 2:
+                continue
+
         return "Текст введено."
+
     except Exception as e:
-        print(f"[computer] Unicode SendInput error: {e}")
-        _require_pyautogui()
-        pyautogui.write(value, interval=float(interval))
-        return "Текст введено резервним способом."
+        print(f"[computer] Clipboard input error: {e}")
+        return "Не вдалося ввести текст."
 
 
 def press(key: str) -> str:
@@ -246,11 +149,13 @@ def focus_process(app_name: str) -> bool:
         return False
 
     candidates = []
+    wanted = {name.lower() for name in names}
+
     try:
         for proc in psutil.process_iter(["pid", "name"]):
             try:
                 name = (proc.info.get("name") or "").lower()
-                if name in {n.lower() for n in names}:
+                if name in wanted:
                     candidates.append(proc.info["pid"])
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -272,10 +177,8 @@ def focus_process(app_name: str) -> bool:
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
         except Exception:
             return
-        if pid in candidates:
-            title = win32gui.GetWindowText(hwnd).strip()
-            if title:
-                target_hwnd = hwnd
+        if pid in candidates and win32gui.GetWindowText(hwnd).strip():
+            target_hwnd = hwnd
 
     try:
         win32gui.EnumWindows(enum_handler, None)
@@ -290,7 +193,7 @@ def focus_process(app_name: str) -> bool:
             win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
         win32gui.ShowWindow(target_hwnd, win32con.SW_SHOW)
         win32gui.SetForegroundWindow(target_hwnd)
-        time.sleep(0.15)
+        time.sleep(0.2)
         return True
     except Exception:
         return False
