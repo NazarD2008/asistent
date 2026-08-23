@@ -1,7 +1,7 @@
 """
 JARVIS Brain
 
-Відповідає за розуміння складних команд через GPT.
+Розуміння складних команд через GPT.
 """
 
 import json
@@ -20,10 +20,7 @@ client = None
 
 if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
     try:
-        client = OpenAI(
-            api_key=AZURE_OPENAI_API_KEY,
-            base_url=AZURE_OPENAI_ENDPOINT,
-        )
+        client = OpenAI(api_key=AZURE_OPENAI_API_KEY, base_url=AZURE_OPENAI_ENDPOINT)
         print("[brain] OpenAI client готовий.")
     except Exception as e:
         print(f"[brain] Помилка створення OpenAI client: {e}")
@@ -44,16 +41,8 @@ def get_last_parsed():
     return _last_action, _last_target
 
 
-def _parse_command(command: str, context=None):
-    if not client:
-        print("[brain] OpenAI client недоступний.")
-        return {"action": "unknown", "target": ""}
-
-    context = context or []
-
-    system_prompt = """
-Ти мозок голосового асистента JARVIS.
-Визначай НАМІР користувача, а не окремі ключові слова.
+SYSTEM_PROMPT = """
+Ти мозок JARVIS. Твоє завдання: зрозуміти НАМІР користувача та повернути одну дію.
 ПОВЕРТАЙ ТІЛЬКИ JSON:
 {"action":"ACTION","target":"TARGET"}
 
@@ -63,43 +52,45 @@ find_content, open_url, web_search, delete_file, analyze_memory,
 set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
 stop, chat, unknown
 
-target завжди рядок. Не вигадуй параметри.
+target завжди рядок.
 
 ПРОГРАМИ:
-"відкрий Steam" -> open_app, target="steam"
-"закрий Chrome" -> close_app, target="chrome"
+"відкрий Steam" -> open_app / "steam"
+"закрий Chrome" -> close_app / "chrome"
 
 МУЗИКА:
-"включи музику" -> play_music, target=""
-"включи Imagine Dragons" -> play_music, target="Imagine Dragons"
+"включи музику" -> play_music / ""
+"включи Imagine Dragons" -> play_music / "Imagine Dragons"
 
 YOUTUBE:
-play_video використовуй ТІЛЬКИ якщо користувач ЯВНО каже "відео", "на YouTube",
-"ютуб", "YouTube" або явно просить знайти відео.
-"відкрий Рік і Морті на YouTube" -> play_video, target="Рік і Морті"
-"знайди відео про космос" -> play_video, target="космос"
+play_video ТІЛЬКИ коли користувач явно каже YouTube/ютуб, "на YouTube", "відео"
+або просить саме відео.
+"відкрий Рік і Морті на YouTube" -> play_video / "Рік і Морті"
+"знайди відео про космос" -> play_video / "космос"
 
-ФІЛЬМИ / СЕРІАЛИ / ШОУ / АНІМЕ / ІНШИЙ КОНТЕНТ:
-Використовуй find_content, якщо користувач хоче знайти, подивитися, запустити,
-увімкнути або дізнатися де подивитися названий фільм, серіал, шоу, аніме тощо,
-АЛЕ не вказав YouTube.
-Це універсальне правило для будь-якої назви, не тільки конкретних тайтлів.
+ФІЛЬМИ, СЕРІАЛИ, ШОУ, АНІМЕ:
+Якщо користувач хоче знайти, подивитися, запустити або включити названий контент,
+але НЕ сказав YouTube, використовуй find_content.
+Це універсальне правило для будь-якої назви.
 
-Приклади:
-"включи Рік і Морті" -> find_content, target="Рік і Морті"
-"хочу подивитися Інтерстеллар" -> find_content, target="Інтерстеллар"
-"де подивитися Breaking Bad" -> find_content, target="Breaking Bad"
-"запусти Гаррі Поттера" -> find_content, target="Гаррі Поттер"
+"включи Рік і Морті" -> find_content / "Рік і Морті"
+"включи Інтерстеллар" -> find_content / "Інтерстеллар"
+"хочу подивитися Breaking Bad" -> find_content / "Breaking Bad"
+"де подивитися Гаррі Поттера" -> find_content / "Гаррі Поттер"
 
-ВАЖЛИВО: не залишай службові слова в target. Target має бути назвою контенту.
-Наприклад "знайде фільм інтерстел" -> target="Інтерстел".
+Не залишай службові слова в target: "включи фільм Інтерстеллар" -> "Інтерстеллар".
 
-YOUTUBE FOLLOW-UP:
-Якщо context показує останній список YouTube результатів,
+FOLLOW-UP:
+Контекст є частиною поточного діалогу.
+Якщо користувач каже "його", "її", "там", "перше", "друге", "відкрий це",
+визначай посилання на попередній результат.
+Не вигадуй нову назву, якщо її можна взяти з context.
+
+Якщо в context є список YouTube результатів:
 "перше", "друге", "відкрий 2" -> open_video_result з номером.
 
 WEB SEARCH:
-Актуальна інформація, погода, новини, курс, ціни -> web_search.
+Актуальна інформація, новини, погода, курс, ціни -> web_search.
 
 SYSTEM:
 Явне вимкнення ПК -> shutdown.
@@ -108,19 +99,33 @@ SYSTEM:
 
 CHAT:
 Звичайне спілкування -> chat.
-Для chat target є готовою короткою природною відповіддю українською,
-без markdown та емодзі.
+Для chat target є короткою природною відповіддю українською.
+Без markdown та емодзі.
 
-CONTEXT:
-Використовуй context для follow-up команд і займенників.
-Не вважай попередню команду поточною дією.
+ВАЖЛИВО:
+Не виконуй дію самостійно. Тільки класифікуй команду.
+Не вважай стару команду новою дією.
+"target" має містити тільки потрібну назву або параметр.
 """
+
+
+def _parse_command(command: str, context=None):
+    if not client:
+        print("[brain] OpenAI client недоступний.")
+        return {"action": "unknown", "target": ""}
+
+    context = context or []
+
+    payload = {
+        "command": command.strip(),
+        "context": context,
+    }
 
     try:
         response = client.responses.create(
             model=AZURE_OPENAI_MODEL,
-            instructions=system_prompt,
-            input=json.dumps({"command": command, "context": context}, ensure_ascii=False),
+            instructions=SYSTEM_PROMPT,
+            input=json.dumps(payload, ensure_ascii=False),
         )
 
         raw = response.output_text.strip()
