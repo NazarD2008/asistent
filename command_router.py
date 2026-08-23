@@ -1,26 +1,7 @@
 import re
 
-from tools import apps, system
+from tools import apps
 from tools import browser
-
-
-# ============================================================
-# LAST ROUTE
-# ============================================================
-
-_last_action = None
-_last_target = None
-
-
-def get_last_route():
-    return _last_action, _last_target
-
-
-def _set_last_route(action, target=""):
-    global _last_action, _last_target
-
-    _last_action = action
-    _last_target = str(target).strip()
 
 
 # ============================================================
@@ -41,7 +22,11 @@ def normalize(text: str) -> str:
         .replace("`", "'")
     )
 
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(
+        r"\s+",
+        " ",
+        text,
+    )
 
     return text
 
@@ -53,6 +38,7 @@ def normalize(text: str) -> str:
 OPEN_WORDS = (
     "відкрий",
     "відкрити",
+    "відкрив",
     "відкрой",
     "открой",
     "отрой",
@@ -75,7 +61,7 @@ CLOSE_WORDS = (
 
 
 # ============================================================
-# APP
+# FIND APP
 # ============================================================
 
 def _find_app(command: str):
@@ -94,6 +80,10 @@ def _find_app(command: str):
     return None
 
 
+# ============================================================
+# APP ROUTER
+# ============================================================
+
 def _route_app(command: str):
 
     app_name = _find_app(command)
@@ -101,41 +91,37 @@ def _route_app(command: str):
     if not app_name:
         return None
 
+    # --------------------------------------------------------
     # CLOSE
+    # --------------------------------------------------------
+
     for word in CLOSE_WORDS:
 
-        if command.startswith(word + " ") or command == word:
+        if (
+            command.startswith(word + " ")
+            or command == word
+        ):
 
-            print(
-                f"[router] Локально: close_app -> {app_name}"
-            )
+            return {
+                "action": "close_app",
+                "target": app_name,
+            }
 
-            response = apps.close_app(app_name)
-
-            _set_last_route(
-                "close_app",
-                app_name
-            )
-
-            return response
-
+    # --------------------------------------------------------
     # OPEN
+    # --------------------------------------------------------
+
     for word in OPEN_WORDS:
 
-        if command.startswith(word + " ") or command == word:
+        if (
+            command.startswith(word + " ")
+            or command == word
+        ):
 
-            print(
-                f"[router] Локально: open_app -> {app_name}"
-            )
-
-            response = apps.open_app(app_name)
-
-            _set_last_route(
-                "open_app",
-                app_name
-            )
-
-            return response
+            return {
+                "action": "open_app",
+                "target": app_name,
+            }
 
     return None
 
@@ -152,51 +138,36 @@ def _route_url(command: str):
         "google.com",
     )
 
-    if any(word in command for word in google_words):
+    if not any(word in command for word in google_words):
+        return None
 
-        # Не перехоплюємо складні пошукові запити.
-        # Наприклад:
-        # "знайди в гуглі погоду"
-        # має піти в GPT/web_search.
+    # Не перехоплюємо пошукові запити.
+    search_words = (
+        "знайди",
+        "знайти",
+        "пошукай",
+        "пошук",
+        "погода",
+        "новини",
+        "курс",
+    )
 
-        search_words = (
-            "знайди",
-            "знайти",
-            "пошукай",
-            "пошук",
-            "погода",
-            "новини",
-            "курс",
-        )
+    if any(word in command for word in search_words):
+        return None
 
-        if any(word in command for word in search_words):
-            return None
+    if command in (
+        "відкрий гугл",
+        "відкрити гугл",
+        "запусти гугл",
+        "відкрий google",
+        "відкрити google",
+        "запусти google",
+    ):
 
-        if (
-            command in (
-                "відкрий гугл",
-                "відкрити гугл",
-                "запусти гугл",
-                "відкрий google",
-                "відкрити google",
-                "запусти google",
-            )
-        ):
-
-            print(
-                "[router] Локально: open_url -> https://www.google.com"
-            )
-
-            response = browser.open_url(
-                "https://www.google.com"
-            )
-
-            _set_last_route(
-                "open_url",
-                "https://www.google.com"
-            )
-
-            return response
+        return {
+            "action": "open_url",
+            "target": "https://www.google.com",
+        }
 
     return None
 
@@ -206,6 +177,10 @@ def _route_url(command: str):
 # ============================================================
 
 def _route_volume(command: str):
+
+    # --------------------------------------------------------
+    # SET VOLUME
+    # --------------------------------------------------------
 
     match = re.search(
         r"(?:звук|гучність|громкость)"
@@ -219,23 +194,18 @@ def _route_volume(command: str):
 
         percent = max(
             0,
-            min(100, percent)
+            min(100, percent),
         )
 
-        print(
-            f"[router] Локально: set_volume -> {percent}"
-        )
+        return {
+            "action": "set_volume",
+            "target": str(percent),
+        }
 
-        response = system.set_volume(percent)
+    # --------------------------------------------------------
+    # VOLUME UP
+    # --------------------------------------------------------
 
-        _set_last_route(
-            "set_volume",
-            percent
-        )
-
-        return response
-
-    # UP
     if any(
         phrase in command
         for phrase in (
@@ -249,18 +219,15 @@ def _route_volume(command: str):
         )
     ):
 
-        print("[router] Локально: volume_up")
+        return {
+            "action": "volume_up",
+            "target": "",
+        }
 
-        response = system.volume_up()
+    # --------------------------------------------------------
+    # VOLUME DOWN
+    # --------------------------------------------------------
 
-        _set_last_route(
-            "volume_up",
-            ""
-        )
-
-        return response
-
-    # DOWN
     if any(
         phrase in command
         for phrase in (
@@ -273,18 +240,15 @@ def _route_volume(command: str):
         )
     ):
 
-        print("[router] Локально: volume_down")
+        return {
+            "action": "volume_down",
+            "target": "",
+        }
 
-        response = system.volume_down()
-
-        _set_last_route(
-            "volume_down",
-            ""
-        )
-
-        return response
-
+    # --------------------------------------------------------
     # MUTE
+    # --------------------------------------------------------
+
     if any(
         phrase in command
         for phrase in (
@@ -296,18 +260,15 @@ def _route_volume(command: str):
         )
     ):
 
-        print("[router] Локально: mute")
+        return {
+            "action": "mute",
+            "target": "",
+        }
 
-        response = system.mute()
-
-        _set_last_route(
-            "mute",
-            ""
-        )
-
-        return response
-
+    # --------------------------------------------------------
     # UNMUTE
+    # --------------------------------------------------------
+
     if any(
         phrase in command
         for phrase in (
@@ -318,16 +279,10 @@ def _route_volume(command: str):
         )
     ):
 
-        print("[router] Локально: unmute")
-
-        response = system.unmute()
-
-        _set_last_route(
-            "unmute",
-            ""
-        )
-
-        return response
+        return {
+            "action": "unmute",
+            "target": "",
+        }
 
     return None
 
@@ -338,7 +293,10 @@ def _route_volume(command: str):
 
 def _route_system(command: str):
 
+    # --------------------------------------------------------
     # SHUTDOWN
+    # --------------------------------------------------------
+
     if command in (
         "вимкни комп",
         "вимкни комп'ютер",
@@ -348,18 +306,15 @@ def _route_system(command: str):
         "вимкни машину",
     ):
 
-        print("[router] Локально: shutdown")
+        return {
+            "action": "shutdown",
+            "target": "",
+        }
 
-        response = system.shutdown()
-
-        _set_last_route(
-            "shutdown",
-            ""
-        )
-
-        return response
-
+    # --------------------------------------------------------
     # RESTART
+    # --------------------------------------------------------
+
     if command in (
         "перезавантаж комп",
         "перезавантаж комп'ютер",
@@ -370,16 +325,10 @@ def _route_system(command: str):
         "restart",
     ):
 
-        print("[router] Локально: restart")
-
-        response = system.restart()
-
-        _set_last_route(
-            "restart",
-            ""
-        )
-
-        return response
+        return {
+            "action": "restart",
+            "target": "",
+        }
 
     return None
 
@@ -389,46 +338,89 @@ def _route_system(command: str):
 # ============================================================
 
 def route(command: str, context=None):
+    """
+    Локальний маршрутизатор.
 
-    global _last_action, _last_target
+    Router НЕ виконує інструменти.
+    Він лише визначає просту команду і повертає:
 
-    _last_action = None
-    _last_target = None
+        {
+            "action": "...",
+            "target": "..."
+        }
+
+    Якщо команда не визначена локально:
+        повертає None.
+
+    GPT тут НІКОЛИ не викликається.
+    """
 
     if not command:
-        return "Я не почув команду."
+        return None
 
     normalized = normalize(command)
 
     if not normalized:
-        return "Я не почув команду."
+        return None
 
+    # ========================================================
     # 1. PROGRAMS
+    # ========================================================
+
     result = _route_app(normalized)
 
     if result is not None:
+        print(
+            f"[router] LOCAL: "
+            f"{result['action']} -> "
+            f"{result['target']}"
+        )
         return result
 
+    # ========================================================
     # 2. GOOGLE
+    # ========================================================
+
     result = _route_url(normalized)
 
     if result is not None:
+        print(
+            f"[router] LOCAL: "
+            f"{result['action']} -> "
+            f"{result['target']}"
+        )
         return result
 
+    # ========================================================
     # 3. VOLUME
+    # ========================================================
+
     result = _route_volume(normalized)
 
     if result is not None:
+        print(
+            f"[router] LOCAL: "
+            f"{result['action']} -> "
+            f"{result['target']}"
+        )
         return result
 
+    # ========================================================
     # 4. SYSTEM
+    # ========================================================
+
     result = _route_system(normalized)
 
     if result is not None:
+        print(
+            f"[router] LOCAL: "
+            f"{result['action']} -> "
+            f"{result['target']}"
+        )
         return result
 
     print(
-        "[router] Локально не визначено -> GPT"
+        "[router] LOCAL: не визначено"
     )
 
     return None
