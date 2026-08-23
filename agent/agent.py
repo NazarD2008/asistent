@@ -1,5 +1,7 @@
 """JARVIS Agent Core."""
 
+import time
+
 from command_router import route
 from brain import handle
 from .memory import Memory
@@ -97,6 +99,16 @@ class JarvisAgent:
 
             action = decision.get("action", "unknown")
             target = str(decision.get("target", "") or "").strip()
+
+            if action == "multi_action":
+                response = self._execute_plan(decision.get("steps", []))
+                self.last_action = "multi_action"
+                self.last_target = ""
+                self.memory.remember(command, response, action="multi_action", target="")
+                print("[agent] Action: multi_action")
+                print(f"[agent] Відповідь: {response}")
+                return response
+
             action, target = self._resolve_follow_up(command, action, target)
 
             response = str(self.execute(action, target, command) or "").strip()
@@ -117,6 +129,33 @@ class JarvisAgent:
             self.last_target = ""
             self.memory.remember(command, response, action="error", target="")
             return response
+
+    def _execute_plan(self, steps) -> str:
+        if not isinstance(steps, list) or not steps:
+            return "Не вдалося побудувати план дій."
+
+        results = []
+        for index, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                continue
+            action = step.get("action", "unknown")
+            target = str(step.get("target", "") or "").strip()
+            if action in ("unknown", "multi_action", "chat", "stop"):
+                continue
+
+            print(f"[agent] Plan step {index}: {action} -> {target}")
+            result = str(self.execute(action, target, "") or "").strip()
+            results.append(result)
+            time.sleep(0.35)
+
+        if not results:
+            return "Не вдалося виконати план."
+
+        meaningful = [r for r in results if r]
+        if not meaningful:
+            return "Готово."
+
+        return "Готово. " + " ".join(meaningful[-2:])
 
     def execute(self, action: str, target: str = "", command: str = "") -> str:
         action = action or "unknown"
@@ -189,11 +228,7 @@ class JarvisAgent:
                 from tools import computer
                 from brain import analyze_screen
                 image_path = computer.screenshot()
-                return analyze_screen(
-                    image_path=image_path,
-                    question=target or "Опиши, що зараз видно на екрані.",
-                    context=self.memory.context(),
-                )
+                return analyze_screen(image_path=image_path, question=target or "Опиши, що зараз видно на екрані.", context=self.memory.context())
             except Exception as e:
                 print(f"[agent] Vision error: {e}")
                 return "Не вдалося проаналізувати екран."
@@ -201,29 +236,23 @@ class JarvisAgent:
         if action in ("mouse_move", "click", "double_click", "type_text", "press_key", "hotkey", "mouse_position"):
             try:
                 from tools import computer
-
                 if action == "mouse_position":
                     return computer.get_mouse_position()
-
                 if action == "mouse_move":
                     parts = target.replace(",", " ").split()
                     if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
                         return "Потрібні координати X Y."
                     return computer.mouse_move(int(parts[0]), int(parts[1]))
-
                 if action in ("click", "double_click"):
                     parts = target.replace(",", " ").split()
                     if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
                         return "Потрібні координати X Y."
                     function = computer.click if action == "click" else computer.double_click
                     return function(int(parts[0]), int(parts[1]))
-
                 if action == "type_text":
                     return computer.type_text(target)
-
                 if action == "press_key":
                     return computer.press(target)
-
                 if action == "hotkey":
                     keys = [key.strip() for key in target.split("+") if key.strip()]
                     return computer.hotkey(*keys)
