@@ -28,9 +28,9 @@ if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
 ALLOWED_ACTIONS = {
     "open_app", "close_app", "play_music", "play_video",
     "open_video_result", "find_content", "open_url", "web_search",
-    "find_file", "open_file", "find_folder", "delete_file", "open_path",
-    "analyze_memory", "set_volume", "volume_up", "volume_down", "mute",
-    "unmute", "shutdown", "restart", "stop", "chat", "unknown",
+    "find_file", "open_file", "find_folder", "open_path", "delete_file",
+    "analyze_memory", "set_volume", "volume_up", "volume_down", "mute", "unmute",
+    "shutdown", "restart", "stop", "chat", "unknown",
 }
 
 _last_action = None
@@ -46,25 +46,17 @@ SYSTEM_PROMPT = """
 ПОВЕРТАЙ ТІЛЬКИ JSON:
 {"action":"ACTION","target":"TARGET"}
 
+target завжди рядок.
+
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
 find_content, open_url, web_search, find_file, open_file, find_folder,
-delete_file, open_path, analyze_memory, set_volume, volume_up, volume_down,
+open_path, delete_file, analyze_memory, set_volume, volume_up, volume_down,
 mute, unmute, shutdown, restart, stop, chat, unknown
-
-target завжди рядок.
 
 ПРОГРАМИ:
 "відкрий Steam" -> open_app / "steam"
 "закрий Chrome" -> close_app / "chrome"
-
-ФАЙЛИ:
-"знайди файл test.txt" -> find_file / "test.txt"
-"відкрий файл report.pdf" -> open_file / "report.pdf"
-"знайди папку Downloads" -> find_folder / "Downloads"
-"видали файл test.txt" -> delete_file / "test.txt"
-
-Не вигадуй повний шлях до файла, якщо користувач його не дав.
 
 МУЗИКА:
 "включи музику" -> play_music / ""
@@ -79,6 +71,14 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 ФІЛЬМИ, СЕРІАЛИ, ШОУ, АНІМЕ:
 Якщо користувач хоче знайти, подивитися, запустити або включити названий контент,
 але НЕ сказав YouTube, використовуй find_content.
+
+ФАЙЛИ:
+"знайди файл test.txt" -> find_file / "test.txt"
+"відкрий файл test.txt" -> open_file / "test.txt"
+"знайди папку Downloads" -> find_folder / "Downloads"
+"видали файл test.txt" -> delete_file / "test.txt"
+
+Файлові дії локально бажані, якщо команда однозначна. Не вигадуй повні шляхи.
 
 FOLLOW-UP:
 Контекст є частиною поточного діалогу.
@@ -101,6 +101,7 @@ CHAT:
 
 ВАЖЛИВО:
 Не виконуй дію самостійно. Тільки класифікуй команду.
+Не вважай стару команду новою дією.
 "target" має містити тільки потрібну назву або параметр.
 """
 
@@ -111,7 +112,11 @@ def _parse_command(command: str, context=None):
         return {"action": "unknown", "target": ""}
 
     context = context or []
-    payload = {"command": command.strip(), "context": context}
+
+    payload = {
+        "command": command.strip(),
+        "context": context,
+    }
 
     try:
         response = client.responses.create(
