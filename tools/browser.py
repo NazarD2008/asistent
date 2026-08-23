@@ -124,7 +124,7 @@ def play_music(query: str = "") -> str:
 
 
 def _google_first_result(query: str):
-    """Пробує взяти перший реальний результат Google, а не залишати користувача на сторінці пошуку."""
+    """Повертає перший нормальний результат Google."""
     try:
         import requests
         from html import unescape
@@ -138,14 +138,12 @@ def _google_first_result(query: str):
         response.raise_for_status()
         html = response.text
 
-        # Google result links are normally /url?q=... or direct hrefs.
         candidates = re.findall(r'href="(?:/url\?q=)?(https?://[^"&]+)', html)
         blocked = ("google.com", "googleusercontent.com", "gstatic.com", "youtube.com")
         for candidate in candidates:
             candidate = unescape(candidate)
-            if candidate.startswith("https://www.google.com") or candidate.startswith("https://google.com"):
-                continue
-            if any(domain in candidate.lower() for domain in blocked):
+            low = candidate.lower()
+            if any(domain in low for domain in blocked):
                 continue
             return candidate
     except Exception as e:
@@ -154,25 +152,25 @@ def _google_first_result(query: str):
 
 
 def find_content(query: str = "") -> str:
-    """Для фільмів/серіалів шукає веб-результат і відкриває перший нормальний результат."""
+    """Шукає фільм/серіал через звичайний Google-запит і відкриває перший результат."""
     query = str(query or "").strip()
     if not query:
         return "Не вказано назву контенту."
 
     print(f"[browser] Пошук контенту: {query}")
 
-    search_query = f'"{query}" дивитися онлайн Україна'
+    # Саме такий запит, який користувач зробив би вручну.
+    search_query = f"{query} дивитись онлайн"
     result_url = _google_first_result(search_query)
 
     if result_url:
         try:
             webbrowser.open_new_tab(result_url)
             print(f"[browser] Google first result: {result_url}")
-            return f"Знайшов сторінку для {query}. Відкриваю найкращий результат."
+            return f"Знайшов {query}. Відкриваю перший результат."
         except Exception as e:
             print(f"[browser] Помилка відкриття результату: {e}")
 
-    # Якщо Google не дозволив отримати URL, хоча б відкриваємо нормальний пошук.
     google_url = "https://www.google.com/search?q=" + urllib.parse.quote(search_query)
     try:
         webbrowser.open_new_tab(google_url)
