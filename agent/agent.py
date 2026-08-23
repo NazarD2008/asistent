@@ -13,12 +13,9 @@ class JarvisAgent:
         self.last_target = None
 
     def _resolve_follow_up(self, command: str, action: str, target: str):
-        """Розв'язує короткі follow-up команди через попередній стан."""
         normalized = command.lower().strip().replace("ё", "е")
         words = normalized.split()
 
-        # YouTube: після пошуку "перше/друге/відкрий 2" має посилатися
-        # на збережений список результатів, а не йти в GPT як нова назва.
         if action == "open_video_result" or any(
             phrase in normalized
             for phrase in ("перше відео", "друге відео", "третє відео", "перше", "друге", "третє")
@@ -38,7 +35,6 @@ class JarvisAgent:
                     if word.isdigit():
                         return "open_video_result", word
 
-        # "закрий його", "відкрий її", "включи це" тощо.
         reference_words = ("його", "її", "це", "цей", "цю", "там", "той", "те")
         has_reference = any(word in normalized for word in reference_words)
 
@@ -85,7 +81,6 @@ class JarvisAgent:
 
             action = decision.get("action", "unknown")
             target = str(decision.get("target", "") or "").strip()
-
             action, target = self._resolve_follow_up(command, action, target)
 
             response = str(self.execute(action, target, command) or "").strip()
@@ -112,6 +107,10 @@ class JarvisAgent:
         target = target or ""
         print(f"[agent] Execute: {action}")
         print(f"[agent] Execute target: {target}")
+
+        if action == "find_file":
+            from tools import files
+            return files.find_file(target)
 
         if action == "open_app":
             from tools import apps
@@ -177,10 +176,7 @@ class JarvisAgent:
         if action == "shutdown":
             try:
                 from tools import system
-                from permissions import ActionCancelled
                 return system.shutdown()
-            except ActionCancelled:
-                return "Добре, скасовано."
             except Exception as e:
                 print(f"[agent] Shutdown error: {e}")
                 return "Не вдалося вимкнути комп'ютер."
@@ -188,10 +184,7 @@ class JarvisAgent:
         if action == "restart":
             try:
                 from tools import system
-                from permissions import ActionCancelled
                 return system.restart()
-            except ActionCancelled:
-                return "Добре, скасовано."
             except Exception as e:
                 print(f"[agent] Restart error: {e}")
                 return "Не вдалося перезавантажити комп'ютер."
