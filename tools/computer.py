@@ -14,7 +14,6 @@ try:
 except ImportError:
     pyperclip = None
 
-
 _SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), "jarvis")
 
 
@@ -62,15 +61,12 @@ def double_click(x: int | None = None, y: int | None = None) -> str:
 
 def type_text(text: str, interval: float = 0.01) -> str:
     _require_pyautogui()
-    text = str(text)
-    # pyautogui.write не вміє нормально вводити кирилицю.
-    # Для Unicode використовуємо clipboard + Ctrl+V.
-    if pyperclip is not None:
-        pyperclip.copy(text)
-        pyautogui.hotkey("ctrl", "v")
-        return "Текст введено."
-    pyautogui.write(text, interval=float(interval))
-    return "Текст введено."
+    value = str(text)
+    if pyperclip is None:
+        return "Не вдалося ввести текст: pyperclip не встановлений."
+    pyperclip.copy(value)
+    pyautogui.hotkey("ctrl", "v")
+    return "Текст вставлено в активне поле."
 
 
 def press(key: str) -> str:
