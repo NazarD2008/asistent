@@ -23,6 +23,8 @@ CLOSE_WORDS = (
 )
 
 SITES = {
+    "ютуб мюзік": "https://music.youtube.com",
+    "youtube music": "https://music.youtube.com",
     "ютуб": "https://www.youtube.com",
     "ютюб": "https://www.youtube.com",
     "youtube": "https://www.youtube.com",
@@ -31,10 +33,6 @@ SITES = {
     "тікток": "https://www.tiktok.com",
     "тик ток": "https://www.tiktok.com",
     "tiktok": "https://www.tiktok.com",
-    "дискорд": "https://discord.com/app",
-    "discord": "https://discord.com/app",
-    "ютуб мюзік": "https://music.youtube.com",
-    "youtube music": "https://music.youtube.com",
 }
 
 
@@ -50,18 +48,8 @@ def _find_app(command: str):
     return None
 
 
-def _route_site(command: str):
-    if not _starts_with(command, OPEN_WORDS):
-        return None
-
-    # Сайти перевіряємо раніше за програми.
-    for name, url in sorted(SITES.items(), key=lambda item: len(item[0]), reverse=True):
-        if name in command:
-            return {"action": "open_url", "target": url}
-    return None
-
-
 def _route_app(command: str):
+    """Програми мають пріоритет над сайтами."""
     app_name = _find_app(command)
     if not app_name:
         return None
@@ -72,6 +60,16 @@ def _route_app(command: str):
     if _starts_with(command, OPEN_WORDS):
         return {"action": "open_app", "target": app_name}
 
+    return None
+
+
+def _route_site(command: str):
+    if not _starts_with(command, OPEN_WORDS):
+        return None
+
+    for name, url in sorted(SITES.items(), key=lambda item: len(item[0]), reverse=True):
+        if name in command:
+            return {"action": "open_url", "target": url}
     return None
 
 
@@ -149,10 +147,11 @@ def route(command: str, context=None):
     if not normalized:
         return None
 
-    # Простий порядок: сайт -> програма -> звук -> музика -> пошук -> система.
+    # Програма -> сайт -> звук -> музика -> пошук -> система.
+    # Discord тепер відкривається як локальна програма, а YouTube залишається сайтом.
     for handler in (
-        _route_site,
         _route_app,
+        _route_site,
         _route_volume,
         _route_music,
         _route_search,
