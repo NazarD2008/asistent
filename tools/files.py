@@ -15,7 +15,11 @@ _last_file_matches = []
 
 def _search_roots():
     home = os.path.expanduser("~")
-    return [os.path.join(home, "Desktop"), os.path.join(home, "Documents"), os.path.join(home, "Downloads")]
+    return [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Documents"),
+        os.path.join(home, "Downloads"),
+    ]
 
 
 def _find_file_paths(name: str, limit: int = 10):
@@ -98,31 +102,51 @@ def open_file_number(number) -> str:
     return f"Відкриваю файл: {path}"
 
 
+def _known_folder_path(name: str):
+    """Повертає тільки стандартні Windows-папки, без рекурсивного підбору."""
+    home = os.path.expanduser("~")
+    wanted = str(name).strip().strip('"').lower()
+    mapping = {
+        "downloads": "Downloads",
+        "завантаження": "Downloads",
+        "desktop": "Desktop",
+        "робочий стіл": "Desktop",
+        "десктоп": "Desktop",
+        "documents": "Documents",
+        "документи": "Documents",
+        "pictures": "Pictures",
+        "зображення": "Pictures",
+        "videos": "Videos",
+        "відео": "Videos",
+        "music": "Music",
+        "музика": "Music",
+    }
+    dirname = mapping.get(wanted)
+    if not dirname:
+        return None
+    path = os.path.join(home, dirname)
+    return path if os.path.isdir(path) else None
+
+
 def find_folder(name: str) -> str:
     name = str(name).strip().strip('"')
     if not name:
         return "Не вказана назва папки."
-    wanted = name.lower()
-    home = os.path.expanduser("~")
-    common = {
-        "downloads": os.path.join(home, "Downloads"),
-        "завантаження": os.path.join(home, "Downloads"),
-        "desktop": os.path.join(home, "Desktop"),
-        "робочий стіл": os.path.join(home, "Desktop"),
-        "documents": os.path.join(home, "Documents"),
-        "документи": os.path.join(home, "Documents"),
-        "pictures": os.path.join(home, "Pictures"),
-        "зображення": os.path.join(home, "Pictures"),
-        "videos": os.path.join(home, "Videos"),
-        "відео": os.path.join(home, "Videos"),
-        "music": os.path.join(home, "Music"),
-        "музика": os.path.join(home, "Music"),
-    }
-    direct = common.get(wanted)
-    if direct and os.path.isdir(direct):
-        os.startfile(direct)
-        return f"Знайшов і відкрив папку: {direct}"
 
+    known = _known_folder_path(name)
+    if known:
+        os.startfile(known)
+        return f"Знайшов і відкрив папку: {known}"
+
+    # Для стандартних назв не відкриваємо випадкову вкладену папку з такою ж назвою.
+    if name.lower() in {
+        "downloads", "завантаження", "desktop", "робочий стіл", "десктоп",
+        "documents", "документи", "pictures", "зображення", "videos", "відео",
+        "music", "музика",
+    }:
+        return f"Стандартну папку не знайдено: {name}"
+
+    wanted = name.lower()
     matches, seen = [], set()
     for root in _search_roots():
         if not os.path.isdir(root):
@@ -147,6 +171,7 @@ def find_folder(name: str) -> str:
             continue
         if len(matches) >= 10:
             break
+
     if not matches:
         return f"Папку не знайдено: {name}"
     if len(matches) == 1:
