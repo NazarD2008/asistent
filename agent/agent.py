@@ -14,9 +14,7 @@ class JarvisAgent:
 
     def _numeric_file_follow_up(self, command: str):
         normalized = command.lower().strip()
-        if not normalized.isdigit():
-            return None
-        if self.last_action != "open_file":
+        if not normalized.isdigit() or self.last_action != "open_file":
             return None
         from tools import files
         return files.open_file_number(int(normalized))
@@ -78,7 +76,6 @@ class JarvisAgent:
                 self.memory.remember(command, response, action="stop", target="")
                 return response
 
-            # Якщо попередня команда чекала номер файлу, обробляємо число локально.
             if normalized.isdigit() and self.last_action == "open_file":
                 response = self._numeric_file_follow_up(normalized)
                 self.last_action = "open_file_number"
@@ -178,6 +175,38 @@ class JarvisAgent:
             import urllib.parse
             search_url = "https://www.google.com/search?q=" + urllib.parse.quote(target)
             return browser.open_url(search_url)
+
+        if action in ("screenshot", "mouse_move", "click", "double_click", "type_text", "press_key", "hotkey", "mouse_position"):
+            from tools import computer
+
+            if action == "screenshot":
+                return f"Скріншот збережено: {computer.screenshot()}"
+
+            if action == "mouse_position":
+                return computer.get_mouse_position()
+
+            if action == "mouse_move":
+                parts = target.replace(",", " ").split()
+                if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
+                    return "Потрібні координати X Y."
+                return computer.mouse_move(int(parts[0]), int(parts[1]))
+
+            if action in ("click", "double_click"):
+                parts = target.replace(",", " ").split()
+                if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
+                    return "Потрібні координати X Y."
+                function = computer.click if action == "click" else computer.double_click
+                return function(int(parts[0]), int(parts[1]))
+
+            if action == "type_text":
+                return computer.type_text(target)
+
+            if action == "press_key":
+                return computer.press(target)
+
+            if action == "hotkey":
+                keys = [key.strip() for key in target.split("+") if key.strip()]
+                return computer.hotkey(*keys)
 
         if action == "analyze_memory":
             try:
