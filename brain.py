@@ -1,6 +1,7 @@
-"""JARVIS Brain - intent parsing and screen vision."""
+"""JARVIS Brain - intent parsing, vision and planning."""
 
 import base64
+import io
 import json
 import os
 
@@ -23,13 +24,12 @@ if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
         print(f"[brain] Помилка створення OpenAI client: {e}")
 
 ALLOWED_ACTIONS = {
-    "open_app", "close_app", "play_music", "play_video",
-    "open_video_result", "find_content", "open_url", "web_search",
-    "find_file", "open_file", "find_folder", "open_path", "delete_file",
-    "screenshot", "analyze_screen", "mouse_move", "click", "double_click",
-    "type_text", "press_key", "hotkey", "mouse_position",
-    "analyze_memory", "set_volume", "volume_up", "volume_down", "mute", "unmute",
-    "shutdown", "restart", "stop", "chat", "unknown",
+    "open_app", "close_app", "play_music", "play_video", "open_video_result",
+    "find_content", "open_url", "web_search", "find_file", "open_file",
+    "find_folder", "open_path", "delete_file", "screenshot", "analyze_screen",
+    "mouse_move", "click", "double_click", "type_text", "press_key", "hotkey",
+    "mouse_position", "analyze_memory", "set_volume", "volume_up", "volume_down",
+    "mute", "unmute", "shutdown", "restart", "multi_action", "stop", "chat", "unknown",
 }
 
 _last_action = None
@@ -41,11 +41,14 @@ def get_last_parsed():
 
 
 SYSTEM_PROMPT = """
-Ти мозок JARVIS. Твоє завдання: зрозуміти НАМІР користувача та повернути одну дію.
-ПОВЕРТАЙ ТІЛЬКИ JSON:
+Ти мозок JARVIS. Твоє завдання: зрозуміти НАМІР користувача.
+ПОВЕРТАЙ ТІЛЬКИ JSON.
+
+Для однієї дії:
 {"action":"ACTION","target":"TARGET"}
 
-target завжди рядок.
+Для кількох дій в одній команді:
+{"action":"multi_action","target":"","steps":[{"action":"ACTION","target":"TARGET"},...]}
 
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
@@ -53,7 +56,7 @@ find_content, open_url, web_search, find_file, open_file, find_folder,
 open_path, delete_file, screenshot, analyze_screen, mouse_move, click,
 double_click, type_text, press_key, hotkey, mouse_position, analyze_memory,
 set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
-stop, chat, unknown
+multi_action, stop, chat, unknown
 
 ПРОГРАМИ:
 "відкрий Steam" -> open_app / "steam"
@@ -68,8 +71,7 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 або просить саме відео.
 
 ФІЛЬМИ, СЕРІАЛИ, ШОУ, АНІМЕ:
-Якщо користувач хоче знайти, подивитися, запустити або включити названий контент,
-але НЕ сказав YouTube, використовуй find_content.
+Без YouTube -> find_content.
 
 ФАЙЛИ:
 "знайди файл test.txt" -> find_file / "test.txt"
@@ -79,28 +81,27 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 
 ЕКРАН:
 "зроби скріншот" -> screenshot / ""
-"що на екрані" -> analyze_screen / "опиши, що зараз на екрані"
-"подивись на екран" -> analyze_screen / "опиши, що зараз на екрані"
-"що відкрито на екрані" -> analyze_screen / "визнач, які програми та вікна зараз відкриті"
-Якщо користувач просить щось конкретне про те, що видно на екрані,
-використовуй analyze_screen і передай запит користувача в target.
+"що зараз на екрані" -> analyze_screen / запит користувача
+Відповідь vision має бути КОРОТКОЮ: максимум 3 речення, без списків і без повних шляхів.
 
-МАШИНА:
+КОМП'ЮТЕР:
 "покажи координати миші" -> mouse_position / ""
 "перемісти мишку на 500 300" -> mouse_move / "500 300"
 "клікни на 500 300" -> click / "500 300"
-"двічі клікни на 500 300" -> double_click / "500 300"
 "напиши Привіт" -> type_text / "Привіт"
-"введи Привіт" -> type_text / "Привіт"
 "натисни Enter" -> press_key / "enter"
 "натисни Ctrl+L" -> hotkey / "ctrl+l"
 
-Не вигадуй координати.
+MULTI-ACTION:
+Якщо користувач просить кілька послідовних дій в одній фразі, поверни multi_action.
+Наприклад:
+"відкрий Chrome, напиши привіт" -> open_app chrome, press_key ctrl+l, type_text привіт
+"відкрий Chrome і потім введи google.com" -> open_app chrome, press_key ctrl+l, type_text google.com
+Не вигадуй дії, крім Ctrl+L перед введенням у браузер.
 
 FOLLOW-UP:
 Контекст є частиною поточного діалогу.
-Якщо користувач каже "його", "її", "там", "перше", "друге", "відкрий це",
-визначай посилання на попередній результат.
+"його", "її", "це", "перше", "друге", "відкрий це" посилаються на попередні результати.
 
 WEB SEARCH:
 Актуальна інформація, новини, погода, курс, ціни -> web_search.
@@ -111,12 +112,10 @@ SYSTEM:
 "стоп", "вихід", "досить" -> stop.
 
 CHAT:
-Звичайне спілкування -> chat.
-Для chat target є короткою природною відповіддю українською.
-Без markdown та емодзі.
+Звичайне спілкування -> chat, target = коротка природна відповідь українською.
 
 ВАЖЛИВО:
-Не виконуй дію самостійно. Тільки класифікуй команду.
+Тільки класифікуй/плануй. Не виконуй дії самостійно.
 "target" має містити тільки потрібний параметр.
 """
 
@@ -140,67 +139,81 @@ def _parse_command(command: str, context=None):
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            cleaned = raw.replace("```json", "").replace("```", "").strip()
-            data = json.loads(cleaned)
+            data = json.loads(raw.replace("```json", "").replace("```", "").strip())
 
         action = data.get("action", "unknown")
         target = str(data.get("target", "") or "").strip()
         if action not in ALLOWED_ACTIONS:
             action = "unknown"
-        return {"action": action, "target": target}
+
+        parsed = {"action": action, "target": target}
+
+        if action == "multi_action":
+            steps = data.get("steps", [])
+            if not isinstance(steps, list) or not steps:
+                return {"action": "unknown", "target": ""}
+            clean_steps = []
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                step_action = step.get("action", "unknown")
+                step_target = str(step.get("target", "") or "").strip()
+                if step_action not in ALLOWED_ACTIONS or step_action == "multi_action":
+                    continue
+                clean_steps.append({"action": step_action, "target": step_target})
+            if not clean_steps:
+                return {"action": "unknown", "target": ""}
+            parsed["steps"] = clean_steps
+
+        return parsed
+
     except Exception as e:
         print(f"[brain] GPT parser error: {e}")
         return {"action": "unknown", "target": ""}
 
 
 def analyze_screen(image_path: str, question: str, context=None) -> str:
-    """Передати скріншот у vision-enabled GPT і отримати опис/відповідь."""
+    """Передати стиснений скріншот у vision-enabled GPT."""
     if not client:
         return "OpenAI client недоступний."
 
     try:
-        with open(image_path, "rb") as image_file:
-            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+        from PIL import Image
 
-        input_items = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": (
-                            "Ти бачиш поточний екран Windows JARVIS. "
-                            "Відповідай українською, тільки на основі того, що реально видно. "
-                            "Не вигадуй кнопки, програми, текст або координати.\n\n"
-                            f"Запит користувача: {question}"
-                        ),
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/png;base64,{base64_image}",
-                        "detail": "high",
-                    },
-                ],
-            }
-        ]
+        image = Image.open(image_path).convert("RGB")
+        max_width = 1600
+        if image.width > max_width:
+            ratio = max_width / image.width
+            image = image.resize((max_width, int(image.height * ratio)))
 
-        if context:
-            input_items.insert(
-                0,
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=68, optimize=True)
+        base64_image = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        response = client.responses.create(
+            model=AZURE_OPENAI_MODEL,
+            input=[
                 {
                     "role": "user",
                     "content": [
                         {
                             "type": "input_text",
-                            "text": f"Контекст діалогу: {json.dumps(context[-6:], ensure_ascii=False)}",
-                        }
+                            "text": (
+                                "Ти бачиш екран Windows JARVIS. "
+                                "Відповідай українською максимум у 3 коротких реченнях. "
+                                "Без списків, без повних шляхів і без зайвих технічних деталей. "
+                                "Кажи тільки те, що реально видно.\n\n"
+                                f"Запит: {question}"
+                            ),
+                        },
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{base64_image}",
+                            "detail": "low",
+                        },
                     ],
-                },
-            )
-
-        response = client.responses.create(
-            model=AZURE_OPENAI_MODEL,
-            input=input_items,
+                }
+            ],
         )
         answer = response.output_text.strip()
         print(f"[brain] Vision: {answer}")
@@ -224,7 +237,7 @@ def handle(command: str, context=None):
     print("[brain] Передаю команду GPT...")
     parsed = _parse_command(command.strip(), context=context or [])
     _last_action = parsed["action"]
-    _last_target = parsed["target"]
+    _last_target = parsed.get("target", "")
     print(f"[brain] Intent: {_last_action}")
     print(f"[brain] Target: {_last_target}")
     return parsed
