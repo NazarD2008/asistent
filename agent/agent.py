@@ -13,13 +13,11 @@ class JarvisAgent:
         self.last_target = None
 
     def _numeric_file_follow_up(self, command: str):
-        """Якщо попередня команда дала список файлів, число вибирає файл."""
         normalized = command.lower().strip()
         if not normalized.isdigit():
             return None
         if self.last_action != "open_file":
             return None
-
         from tools import files
         return files.open_file_number(int(normalized))
 
@@ -80,18 +78,18 @@ class JarvisAgent:
                 self.memory.remember(command, response, action="stop", target="")
                 return response
 
-            # Число після "відкрий файл ..." вибирає пункт зі списку.
+            # Якщо попередня команда чекала номер файлу, обробляємо число локально.
             if normalized.isdigit() and self.last_action == "open_file":
                 response = self._numeric_file_follow_up(normalized)
-                self.last_target = ""
+                self.last_action = "open_file_number"
+                self.last_target = normalized
                 self.memory.remember(command, response, action="open_file_number", target=normalized)
-                print(f"[agent] Action: open_file_number")
+                print("[agent] Action: open_file_number")
                 print(f"[agent] Target: {normalized}")
                 print(f"[agent] Відповідь: {response}")
                 return response
 
             decision = route(command, context=self.memory.context())
-
             if decision is None:
                 context = self.memory.context()
                 print(f"[agent] Контекст: {context}")
