@@ -14,8 +14,8 @@ def normalize(text: str) -> str:
 
 OPEN_WORDS = (
     "відкрий", "відкрити", "відкрив", "відкрой", "відкрйи", "відкри",
-    "открой", "отрой", "запусти", "запустити", "включи",
-    "включити", "увімкни", "увімкнути",
+    "открой", "отрой", "запусти", "запустити", "включи", "включити",
+    "увімкни", "увімкнути",
 )
 
 CLOSE_WORDS = (
@@ -88,10 +88,7 @@ def _route_file(command: str):
                 return {"action": action, "target": name}
 
     folder_prefixes = (
-        "відкрий папку ",
-        "відкрити папку ",
-        "знайди папку ",
-        "знайти папку ",
+        "відкрий папку ", "відкрити папку ", "знайди папку ", "знайти папку ",
     )
     for prefix in folder_prefixes:
         if command.startswith(prefix):
@@ -126,6 +123,41 @@ def _route_music(command: str):
     return None
 
 
+def _route_computer(command: str):
+    if command in ("зроби скріншот", "зроби знімок екрана", "скріншот", "скриншот"):
+        return {"action": "screenshot", "target": ""}
+
+    if command in ("покажи координати миші", "де мишка", "позиція миші"):
+        return {"action": "mouse_position", "target": ""}
+
+    match = re.search(r"(?:перемісти|пересунь) (?:мишку|мишу) на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
+    if match:
+        return {"action": "mouse_move", "target": f"{match.group(1)} {match.group(2)}"}
+
+    match = re.search(r"(?:клікни|натисни кнопкою) на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
+    if match:
+        return {"action": "click", "target": f"{match.group(1)} {match.group(2)}"}
+
+    match = re.search(r"двічі клікни на\s*(-?\d+)\s*[ ,]\s*(-?\d+)", command)
+    if match:
+        return {"action": "double_click", "target": f"{match.group(1)} {match.group(2)}"}
+
+    for prefix in ("напиши ", "введи "):
+        if command.startswith(prefix):
+            text = command[len(prefix):].strip()
+            if text:
+                return {"action": "type_text", "target": text}
+
+    if command.startswith("натисни "):
+        key = command[len("натисни "):].strip()
+        if key:
+            if "+" in key:
+                return {"action": "hotkey", "target": key}
+            return {"action": "press_key", "target": key}
+
+    return None
+
+
 def _route_search(command: str):
     prefixes = ("знайди ", "знайти ", "пошукай ", "пошук ")
     for prefix in prefixes:
@@ -151,13 +183,13 @@ def route(command: str, context=None):
     if not normalized:
         return None
 
-    # Програми -> сайти -> файли -> звук -> музика -> пошук -> система.
     for handler in (
         _route_app,
         _route_site,
         _route_file,
         _route_volume,
         _route_music,
+        _route_computer,
         _route_search,
         _route_system,
     ):
