@@ -28,9 +28,9 @@ if AZURE_OPENAI_API_KEY and AZURE_OPENAI_ENDPOINT:
 ALLOWED_ACTIONS = {
     "open_app", "close_app", "play_music", "play_video",
     "open_video_result", "find_content", "open_url", "web_search",
-    "delete_file", "analyze_memory", "set_volume", "volume_up",
-    "volume_down", "mute", "unmute", "shutdown", "restart",
-    "stop", "chat", "unknown",
+    "find_file", "open_file", "find_folder", "delete_file", "open_path",
+    "analyze_memory", "set_volume", "volume_up", "volume_down", "mute",
+    "unmute", "shutdown", "restart", "stop", "chat", "unknown",
 }
 
 _last_action = None
@@ -48,15 +48,23 @@ SYSTEM_PROMPT = """
 
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
-find_content, open_url, web_search, delete_file, analyze_memory,
-set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
-stop, chat, unknown
+find_content, open_url, web_search, find_file, open_file, find_folder,
+delete_file, open_path, analyze_memory, set_volume, volume_up, volume_down,
+mute, unmute, shutdown, restart, stop, chat, unknown
 
 target завжди рядок.
 
 ПРОГРАМИ:
 "відкрий Steam" -> open_app / "steam"
 "закрий Chrome" -> close_app / "chrome"
+
+ФАЙЛИ:
+"знайди файл test.txt" -> find_file / "test.txt"
+"відкрий файл report.pdf" -> open_file / "report.pdf"
+"знайди папку Downloads" -> find_folder / "Downloads"
+"видали файл test.txt" -> delete_file / "test.txt"
+
+Не вигадуй повний шлях до файла, якщо користувач його не дав.
 
 МУЗИКА:
 "включи музику" -> play_music / ""
@@ -71,23 +79,12 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 ФІЛЬМИ, СЕРІАЛИ, ШОУ, АНІМЕ:
 Якщо користувач хоче знайти, подивитися, запустити або включити названий контент,
 але НЕ сказав YouTube, використовуй find_content.
-Це універсальне правило для будь-якої назви.
-
-"включи Рік і Морті" -> find_content / "Рік і Морті"
-"включи Інтерстеллар" -> find_content / "Інтерстеллар"
-"хочу подивитися Breaking Bad" -> find_content / "Breaking Bad"
-"де подивитися Гаррі Поттера" -> find_content / "Гаррі Поттер"
-
-Не залишай службові слова в target: "включи фільм Інтерстеллар" -> "Інтерстеллар".
 
 FOLLOW-UP:
 Контекст є частиною поточного діалогу.
 Якщо користувач каже "його", "її", "там", "перше", "друге", "відкрий це",
 визначай посилання на попередній результат.
 Не вигадуй нову назву, якщо її можна взяти з context.
-
-Якщо в context є список YouTube результатів:
-"перше", "друге", "відкрий 2" -> open_video_result з номером.
 
 WEB SEARCH:
 Актуальна інформація, новини, погода, курс, ціни -> web_search.
@@ -104,7 +101,6 @@ CHAT:
 
 ВАЖЛИВО:
 Не виконуй дію самостійно. Тільки класифікуй команду.
-Не вважай стару команду новою дією.
 "target" має містити тільки потрібну назву або параметр.
 """
 
@@ -115,11 +111,7 @@ def _parse_command(command: str, context=None):
         return {"action": "unknown", "target": ""}
 
     context = context or []
-
-    payload = {
-        "command": command.strip(),
-        "context": context,
-    }
+    payload = {"command": command.strip(), "context": context}
 
     try:
         response = client.responses.create(
