@@ -1,6 +1,7 @@
 """JARVIS Browser / YouTube / content search."""
 
 import os
+import re
 import urllib.parse
 import webbrowser
 
@@ -52,11 +53,7 @@ def _youtube_search(query: str, max_results: int = 5):
         video_id = item.get("id", {}).get("videoId")
         snippet = item.get("snippet", {})
         if video_id:
-            results.append({
-                "id": video_id,
-                "title": snippet.get("title", "Без назви"),
-                "channel": snippet.get("channelTitle", "Невідомий канал"),
-            })
+            results.append({"id": video_id, "title": snippet.get("title", "Без назви"), "channel": snippet.get("channelTitle", "Невідомий канал")})
     _last_results = results
     print(f"[browser] YouTube знайдено: {len(results)} відео")
     return results
@@ -68,14 +65,12 @@ def play_video(query: str = "") -> str:
     if not query:
         _last_results = []
         return open_url("https://www.youtube.com")
-
     results = _youtube_search(query)
     search_url = "https://www.youtube.com/results?search_query=" + urllib.parse.quote(query)
     try:
         webbrowser.open_new_tab(search_url)
     except Exception:
         return "Не вдалося відкрити YouTube."
-
     if results:
         return f"Знайшов {len(results)} відео. Яке відкрити?"
     return f"Шукаю на YouTube: {query}."
@@ -128,119 +123,61 @@ def play_music(query: str = "") -> str:
         return "Не вдалося відкрити YouTube Music."
 
 
-def _justwatch_locale():
-    """Повертає локаль JustWatch для України."""
+def _google_first_result(query: str):
+    """Пробує взяти перший реальний результат Google, а не залишати користувача на сторінці пошуку."""
     try:
         import requests
+        from html import unescape
+
+        url = "https://www.google.com/search?q=" + urllib.parse.quote(query)
         response = requests.get(
-            "https://apis.justwatch.com/content/locales/state",
-            headers={"User-Agent": "JARVIS/1.0"},
-            timeout=8,
-        )
-        response.raise_for_status()
-        for item in response.json():
-            if item.get("iso_3166_2") == "UA" or item.get("country") == "UA":
-                return item.get("full_locale")
-    except Exception as e:
-        print(f"[browser] JustWatch locale error: {e}")
-
-    # Якщо список локалей недоступний, для українського каталогу
-    # використовуємо стандартну локаль JustWatch.
-    return "uk_UA"
-
-
-def _justwatch_search(query: str):
-    """Шукає тайтл через JustWatch та повертає його country-specific URL."""
-    try:
-        import requests
-
-        locale = _justwatch_locale()
-        url = f"https://apis.justwatch.com/content/titles/{locale}/popular"
-
-        payload = {
-            "age_certifications": None,
-            "content_types": ["movie", "show"],
-            "presentation_types": None,
-            "providers": None,
-            "genres": None,
-            "languages": None,
-            "release_year_from": None,
-            "release_year_until": None,
-            "monetization_types": None,
-            "min_price": None,
-            "max_price": None,
-            "nationwide_cinema_releases_only": None,
-            "scoring_filter_types": None,
-            "cinema_release": None,
-            "query": query,
-            "page": 1,
-            "page_size": 10,
-            "timeline_type": None,
-            "person_id": None,
-        }
-
-        response = requests.post(
             url,
-            json=payload,
-            headers={
-                "User-Agent": "JARVIS/1.0",
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140 Safari/537.36"},
             timeout=10,
         )
         response.raise_for_status()
-        data = response.json()
-        items = data.get("items") or []
+        html = response.text
 
-        if not items:
-            return None
-
-        query_norm = " ".join(query.lower().split())
-        exact = [
-            item for item in items
-            if " ".join(str(item.get("title", "")).lower().split()) == query_norm
-            or " ".join(str(item.get("original_title", "")).lower().split()) == query_norm
-        ]
-        item = exact[0] if exact else items[0]
-
-        path = item.get("full_path")
-        if not path:
-            return None
-
-        return {
-            "title": item.get("title") or item.get("original_title") or query,
-            "url": "https://www.justwatch.com" + path,
-        }
-
+        # Google result links are normally /url?q=... or direct hrefs.
+        candidates = re.findall(r'href="(?:/url\?q=)?(https?://[^"&]+)', html)
+        blocked = ("google.com", "googleusercontent.com", "gstatic.com", "youtube.com")
+        for candidate in candidates:
+            candidate = unescape(candidate)
+            if candidate.startswith("https://www.google.com") or candidate.startswith("https://google.com"):
+                continue
+            if any(domain in candidate.lower() for domain in blocked):
+                continue
+            return candidate
     except Exception as e:
-        print(f"[browser] JustWatch search error: {e}")
-        return None
+        print(f"[browser] Google first-result error: {e}")
+    return None
 
 
 def find_content(query: str = "") -> str:
-    """Знаходить найкращий тайтл і відкриває його сторінку JustWatch."""
+    """Для фільмів/серіалів шукає веб-результат і відкриває перший нормальний результат."""
     query = str(query or "").strip()
     if not query:
         return "Не вказано назву контенту."
 
     print(f"[browser] Пошук контенту: {query}")
 
-    result = _justwatch_search(query)
-    if result:
-        try:
-            webbrowser.open_new_tab(result["url"])
-            print(f"[browser] JustWatch результат: {result['url']}")
-            return f"Знайшов {result['title']}. Відкриваю сторінку, де його можна подивитися."
-        except Exception as e:
-            print(f"[browser] Помилка відкриття JustWatch: {e}")
+    search_query = f'"{query}" дивитися онлайн Україна'
+    result_url = _google_first_result(search_query)
 
-    google_query = f'"{query}" дивитися онлайн Україна'
-    google_url = "https://www.google.com/search?q=" + urllib.parse.quote(google_query)
+    if result_url:
+        try:
+            webbrowser.open_new_tab(result_url)
+            print(f"[browser] Google first result: {result_url}")
+            return f"Знайшов сторінку для {query}. Відкриваю найкращий результат."
+        except Exception as e:
+            print(f"[browser] Помилка відкриття результату: {e}")
+
+    # Якщо Google не дозволив отримати URL, хоча б відкриваємо нормальний пошук.
+    google_url = "https://www.google.com/search?q=" + urllib.parse.quote(search_query)
     try:
         webbrowser.open_new_tab(google_url)
-        print(f"[browser] Fallback Google: {google_url}")
-        return f"Не знайшов готову сторінку. Відкриваю пошук для {query}."
+        print(f"[browser] Google fallback: {google_url}")
+        return f"Відкриваю пошук для {query}."
     except Exception:
         return "Не вдалося виконати пошук контенту."
 
