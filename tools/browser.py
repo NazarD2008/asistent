@@ -129,26 +129,32 @@ def play_music(query: str = "") -> str:
 
 
 def find_content(query: str = "") -> str:
-    """Універсальний пошук фільмів, серіалів, шоу та іншого контенту.
+    """Шукає, де легально подивитися фільм, серіал або шоу.
 
-    YouTube тут НЕ використовується, якщо користувач явно його не просив.
+    YouTube не використовується, якщо користувач явно його не просив.
+    Основний пошук іде через JustWatch у регіоні України.
     """
     query = str(query or "").strip()
     if not query:
         return "Не вказано назву контенту."
 
-    search_query = f"{query} де подивитися"
-    url = "https://www.google.com/search?q=" + urllib.parse.quote(search_query)
+    encoded = urllib.parse.quote(query)
+    justwatch_url = f"https://www.justwatch.com/ua/search?q={encoded}"
+    google_query = f'"{query}" де подивитися онлайн Україна'
+    google_url = "https://www.google.com/search?q=" + urllib.parse.quote(google_query)
 
     try:
-        webbrowser.open_new_tab(url)
+        opened = webbrowser.open_new_tab(justwatch_url)
+        if not opened:
+            webbrowser.open_new_tab(google_url)
+
         print(f"[browser] Пошук контенту: {query}")
-        return f"Шукаю, де подивитися {query}."
+        print(f"[browser] JustWatch UA: {justwatch_url}")
+        return f"Шукаю, де подивитися {query} в Україні."
     except Exception as e:
         print(f"[browser] Помилка пошуку контенту: {e}")
         return "Не вдалося відкрити пошук контенту."
 
 
-# Сумісність зі старим кодом
 def find_movie(query: str = "") -> str:
     return find_content(query)
