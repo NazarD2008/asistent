@@ -1,13 +1,4 @@
-"""JARVIS computer control tools for Windows.
-
-Provides safe, low-level primitives for future screen/vision control:
-- screenshot
-- mouse move/click
-- keyboard typing/keys
-- hotkeys
-
-These tools do not make decisions themselves. The agent decides what action to run.
-"""
+"""JARVIS computer control tools for Windows."""
 
 import os
 import tempfile
@@ -17,6 +8,11 @@ try:
     import pyautogui
 except ImportError:
     pyautogui = None
+
+try:
+    import pyperclip
+except ImportError:
+    pyperclip = None
 
 
 _SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), "jarvis")
@@ -28,19 +24,15 @@ def _require_pyautogui():
 
 
 def screenshot(path: str | None = None) -> str:
-    """Зберегти скріншот екрана та повернути абсолютний шлях."""
     _require_pyautogui()
-
     if path:
         output = os.path.abspath(os.path.expanduser(path))
     else:
         os.makedirs(_SCREENSHOT_DIR, exist_ok=True)
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         output = os.path.join(_SCREENSHOT_DIR, f"screen_{stamp}.png")
-
     os.makedirs(os.path.dirname(output), exist_ok=True)
-    image = pyautogui.screenshot()
-    image.save(output)
+    pyautogui.screenshot().save(output)
     return output
 
 
@@ -70,7 +62,14 @@ def double_click(x: int | None = None, y: int | None = None) -> str:
 
 def type_text(text: str, interval: float = 0.01) -> str:
     _require_pyautogui()
-    pyautogui.write(str(text), interval=float(interval))
+    text = str(text)
+    # pyautogui.write не вміє нормально вводити кирилицю.
+    # Для Unicode використовуємо clipboard + Ctrl+V.
+    if pyperclip is not None:
+        pyperclip.copy(text)
+        pyautogui.hotkey("ctrl", "v")
+        return "Текст введено."
+    pyautogui.write(text, interval=float(interval))
     return "Текст введено."
 
 
