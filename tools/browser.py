@@ -128,25 +128,110 @@ def play_music(query: str = "") -> str:
         return "Не вдалося відкрити YouTube Music."
 
 
+def _justwatch_locale():
+    """Повертає локаль JustWatch для України."""
+    try:
+        import requests
+        response = requests.get(
+            "https://apis.justwatch.com/content/locales/state",
+            headers={"User-Agent": "JARVIS/1.0"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        for item in response.json():
+            if item.get("iso_3166_2") == "UA" or item.get("country") == "UA":
+                return item.get("full_locale")
+    except Exception as e:
+        print(f"[browser] JustWatch locale error: {e}")
+    return None
+
+
+def _justwatch_search(query: str):
+    """Шукає точний тайтл через публічний endpoint JustWatch."""
+    try:
+        import requests
+        locale = _justwatch_locale()
+        if not locale:
+            print("[browser] JustWatch: локаль UA не знайдена")
+            return None
+
+        url = f"https://apis.justwatch.com/content/titles/{locale}/popular"
+        payload = {
+            "age_certifications": None,
+            "content_types": ["movie", "show"],
+            "presentation_types": None,
+            "providers": None,
+            "genres": None,
+            "languages": None,
+            "release_year_from": None,
+            "release_year_until": None,
+            "monetization_types": None,
+            "min_price": None,
+            "max_price": None,
+            "nationwide_cinema_releases_only": None,
+            "scoring_filter_types": None,
+            "cinema_release": None,
+            "query": query,
+            "page": 1,
+            "page_size": 5,
+            "timeline_type": None,
+            "person_id": None,
+        }
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"User-Agent": "JARVIS/1.0", "Accept": "application/json"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        items = data.get("items") or []
+        if not items:
+            return None
+
+        query_norm = " ".join(query.lower().split())
+        exact = [item for item in items if " ".join(str(item.get("title", "")).lower().split()) == query_norm]
+        item = exact[0] if exact else items[0]
+        path = item.get("full_path")
+        if not path:
+            return None
+
+        # full_path є country-specific шляхом JustWatch.
+        return {
+            "title": item.get("title", query),
+            "url": "https://www.justwatch.com" + path,
+        }
+    except Exception as e:
+        print(f"[browser] JustWatch search error: {e}")
+        return None
+
+
 def find_content(query: str = "") -> str:
-    """Шукає сторінку фільму/серіалу/шоу через Google без хардкоду тайтлів."""
+    """Знаходить найкращий знайдений тайтл і відкриває його сторінку."""
     query = str(query or "").strip()
     if not query:
         return "Не вказано назву контенту."
 
-    # Пошук саме назви + наміру користувача. Google сам підбирає
-    # сторінки сервісів, каталоги та офіційні джерела.
+    print(f"[browser] Пошук контенту: {query}")
+
+    result = _justwatch_search(query)
+    if result:
+        try:
+            webbrowser.open_new_tab(result["url"])
+            print(f"[browser] JustWatch результат: {result['url']}")
+            return f"Знайшов {result['title']}. Відкриваю сторінку, де його можна подивитися."
+        except Exception as e:
+            print(f"[browser] Помилка відкриття JustWatch: {e}")
+
+    # Запасний варіант, якщо API недоступний або тайтл не знайдений.
     google_query = f'"{query}" дивитися онлайн Україна'
     google_url = "https://www.google.com/search?q=" + urllib.parse.quote(google_query)
-
     try:
         webbrowser.open_new_tab(google_url)
-        print(f"[browser] Пошук контенту: {query}")
-        print(f"[browser] Google: {google_url}")
-        return f"Шукаю, де подивитися {query} в Україні."
-    except Exception as e:
-        print(f"[browser] Помилка пошуку контенту: {e}")
-        return "Не вдалося відкрити пошук контенту."
+        print(f"[browser] Fallback Google: {google_url}")
+        return f"Не знайшов готову сторінку. Відкриваю пошук для {query}."
+    except Exception:
+        return "Не вдалося виконати пошук контенту."
 
 
 def find_movie(query: str = "") -> str:
