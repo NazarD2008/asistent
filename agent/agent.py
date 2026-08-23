@@ -108,9 +108,14 @@ class JarvisAgent:
         print(f"[agent] Execute: {action}")
         print(f"[agent] Execute target: {target}")
 
-        if action == "find_file":
+        if action in ("find_file", "open_file", "delete_file", "find_folder"):
             from tools import files
-            return files.find_file(target)
+            function = getattr(files, action)
+            return str(function(target))
+
+        if action == "open_path":
+            from tools import files
+            return str(files.open_path(target))
 
         if action == "open_app":
             from tools import apps
