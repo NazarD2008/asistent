@@ -12,6 +12,17 @@ class JarvisAgent:
         self.last_action = None
         self.last_target = None
 
+    def _numeric_file_follow_up(self, command: str):
+        """Якщо попередня команда дала список файлів, число вибирає файл."""
+        normalized = command.lower().strip()
+        if not normalized.isdigit():
+            return None
+        if self.last_action != "open_file":
+            return None
+
+        from tools import files
+        return files.open_file_number(int(normalized))
+
     def _resolve_follow_up(self, command: str, action: str, target: str):
         normalized = command.lower().strip().replace("ё", "е")
         words = normalized.split()
@@ -67,6 +78,16 @@ class JarvisAgent:
                 self.last_action = "stop"
                 self.last_target = ""
                 self.memory.remember(command, response, action="stop", target="")
+                return response
+
+            # Число після "відкрий файл ..." вибирає пункт зі списку.
+            if normalized.isdigit() and self.last_action == "open_file":
+                response = self._numeric_file_follow_up(normalized)
+                self.last_target = ""
+                self.memory.remember(command, response, action="open_file_number", target=normalized)
+                print(f"[agent] Action: open_file_number")
+                print(f"[agent] Target: {normalized}")
+                print(f"[agent] Відповідь: {response}")
                 return response
 
             decision = route(command, context=self.memory.context())
@@ -129,8 +150,7 @@ class JarvisAgent:
             from tools import browser
             result = browser.play_video(target)
             if browser.has_last_results():
-                results = browser.get_last_results()
-                return f"Знайшов {len(results)} відео. Яке відкрити?"
+                return f"Знайшов {len(browser.get_last_results())} відео. Яке відкрити?"
             return result
 
         if action == "open_video_result":
