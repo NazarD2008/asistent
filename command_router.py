@@ -39,6 +39,14 @@ def _starts_with(command: str, words) -> bool:
     return any(command == word or command.startswith(word + " ") for word in words)
 
 
+def _is_compound(command: str) -> bool:
+    markers = (
+        ",", " потім ", " і ", " напиши ", " введи ",
+        " натисни ", " клікни ", " кликни ", " двічі ",
+    )
+    return any(marker in command for marker in markers)
+
+
 def _find_app(command: str):
     aliases = sorted(apps.APP_ALIASES.items(), key=lambda item: len(item[0]), reverse=True)
     for phrase, app_name in aliases:
@@ -48,11 +56,8 @@ def _find_app(command: str):
 
 
 def _route_app(command: str):
-    # Не перехоплюємо складені команди на кшталт:
-    # "відкрий Chrome, напиши привіт".
-    if "," in command or " потім " in command or " і " in command:
+    if _is_compound(command):
         return None
-
     app_name = _find_app(command)
     if not app_name:
         return None
@@ -64,9 +69,7 @@ def _route_app(command: str):
 
 
 def _route_site(command: str):
-    if not _starts_with(command, OPEN_WORDS):
-        return None
-    if "," in command or " потім " in command or " і " in command:
+    if not _starts_with(command, OPEN_WORDS) or _is_compound(command):
         return None
     for name, url in sorted(SITES.items(), key=lambda item: len(item[0]), reverse=True):
         if name in command:
@@ -76,16 +79,11 @@ def _route_site(command: str):
 
 def _route_file(command: str):
     file_prefixes = (
-        ("знайди файл ", "find_file"),
-        ("знайти файл ", "find_file"),
-        ("пошукай файл ", "find_file"),
-        ("пошук файлу ", "find_file"),
-        ("відкрий файл ", "open_file"),
-        ("відкрити файл ", "open_file"),
-        ("запусти файл ", "open_file"),
-        ("видали файл ", "delete_file"),
-        ("видалити файл ", "delete_file"),
-        ("знищ файл ", "delete_file"),
+        ("знайди файл ", "find_file"), ("знайти файл ", "find_file"),
+        ("пошукай файл ", "find_file"), ("пошук файлу ", "find_file"),
+        ("відкрий файл ", "open_file"), ("відкрити файл ", "open_file"),
+        ("запусти файл ", "open_file"), ("видали файл ", "delete_file"),
+        ("видалити файл ", "delete_file"), ("знищ файл ", "delete_file"),
     )
     for prefix, action in file_prefixes:
         if command.startswith(prefix):
@@ -93,10 +91,7 @@ def _route_file(command: str):
             if name:
                 return {"action": action, "target": name}
 
-    folder_prefixes = (
-        "відкрий папку ", "відкрити папку ", "знайди папку ", "знайти папку ",
-    )
-    for prefix in folder_prefixes:
+    for prefix in ("відкрий папку ", "відкрити папку ", "знайди папку ", "знайти папку "):
         if command.startswith(prefix):
             name = command[len(prefix):].strip()
             if name:
@@ -105,6 +100,8 @@ def _route_file(command: str):
 
 
 def _route_volume(command: str):
+    if _is_compound(command):
+        return None
     match = re.search(r"(?:звук|гучність|громкость)\s*(?:на|до)?\s*(\d{1,3})", command)
     if match:
         return {"action": "set_volume", "target": str(max(0, min(100, int(match.group(1)))))}
@@ -120,67 +117,59 @@ def _route_volume(command: str):
 
 
 def _number_from_word(word: str):
-    numbers = {
+    return {
         "сто": 100, "стo": 100, "двісті": 200, "двісти": 200,
         "триста": 300, "чотириста": 400, "п'ятсот": 500, "пятсот": 500,
         "шістсот": 600, "шестсот": 600, "сімсот": 700, "семьсот": 700,
         "вісімсот": 800, "восемьсот": 800, "дев'ятсот": 900, "девятсот": 900,
-    }
-    return numbers.get(word)
+    }.get(word)
 
 
 def _parse_xy(command: str):
-    # Підтримує цифри та базові слова: "п'ятсот 300", "500 300".
     tokens = re.findall(r"\d{1,5}|[а-яіїєґ']+", command)
     values = []
     for token in tokens:
-        if token.isdigit():
-            values.append(int(token))
-        else:
-            number = _number_from_word(token)
-            if number is not None:
-                values.append(number)
+        value = int(token) if token.isdigit() else _number_from_word(token)
+        if value is not None:
+            values.append(value)
         if len(values) == 2:
             break
     return values if len(values) == 2 else None
 
 
 def _route_computer(command: str):
+    if _is_compound(command):
+        return None
     if "скріншот" in command or "скриншот" in command:
         return {"action": "screenshot", "target": ""}
-
     if "координат" in command and "миш" in command:
         return {"action": "mouse_position", "target": ""}
-
     if any(word in command for word in ("перемісти миш", "перемісти курсор", "посунь миш", "посунь курсор")):
         xy = _parse_xy(command)
         if xy:
             return {"action": "mouse_move", "target": f"{xy[0]} {xy[1]}"}
-
     if any(word in command for word in ("двічі клікни", "двойной клик", "подвійний клік")):
         xy = _parse_xy(command)
         if xy:
             return {"action": "double_click", "target": f"{xy[0]} {xy[1]}"}
-
     if any(word in command for word in ("клікни", "кликни", "натисни мишкою", "натисни мишею")):
         xy = _parse_xy(command)
         if xy:
             return {"action": "click", "target": f"{xy[0]} {xy[1]}"}
-
     if any(word in command for word in ("напиши ", "введи ")):
         for prefix in ("напиши ", "введи "):
             if command.startswith(prefix):
                 text = command[len(prefix):].strip()
                 if text:
                     return {"action": "type_text", "target": text}
-
     if command.startswith("натисни "):
         return {"action": "press_key", "target": command[len("натисни "):].strip()}
-
     return None
 
 
 def _route_music(command: str):
+    if _is_compound(command):
+        return None
     if not any(word in command for word in ("музику", "музика", "music")):
         return None
     if _starts_with(command, OPEN_WORDS):
@@ -189,8 +178,9 @@ def _route_music(command: str):
 
 
 def _route_search(command: str):
-    prefixes = ("знайди ", "знайти ", "пошукай ", "пошук ")
-    for prefix in prefixes:
+    if _is_compound(command):
+        return None
+    for prefix in ("знайди ", "знайти ", "пошукай ", "пошук "):
         if command.startswith(prefix):
             query = command[len(prefix):].strip()
             if query:
@@ -199,6 +189,8 @@ def _route_search(command: str):
 
 
 def _route_system(command: str):
+    if _is_compound(command):
+        return None
     if command in ("вимкни комп", "вимкни комп'ютер", "вимкни пк", "выключи компьютер", "выключи пк", "вимкни машину"):
         return {"action": "shutdown", "target": ""}
     if command in ("перезавантаж комп", "перезавантаж комп'ютер", "перезавантаж пк", "перезапусти пк", "перезагрузи компьютер", "перезагрузи пк", "restart"):
@@ -212,21 +204,10 @@ def route(command: str, context=None):
     normalized = normalize(command)
     if not normalized:
         return None
-
-    for handler in (
-        _route_app,
-        _route_site,
-        _route_file,
-        _route_computer,
-        _route_volume,
-        _route_music,
-        _route_search,
-        _route_system,
-    ):
+    for handler in (_route_app, _route_site, _route_file, _route_computer, _route_volume, _route_music, _route_search, _route_system):
         result = handler(normalized)
         if result is not None:
             print(f"[router] LOCAL: {result['action']} -> {result['target']}")
             return result
-
     print("[router] LOCAL: не визначено")
     return None
