@@ -176,37 +176,60 @@ class JarvisAgent:
             search_url = "https://www.google.com/search?q=" + urllib.parse.quote(target)
             return browser.open_url(search_url)
 
-        if action in ("screenshot", "mouse_move", "click", "double_click", "type_text", "press_key", "hotkey", "mouse_position"):
-            from tools import computer
-
-            if action == "screenshot":
+        if action == "screenshot":
+            try:
+                from tools import computer
                 return f"Скріншот збережено: {computer.screenshot()}"
+            except Exception as e:
+                print(f"[agent] Screenshot error: {e}")
+                return "Не вдалося зробити скріншот."
 
-            if action == "mouse_position":
-                return computer.get_mouse_position()
+        if action == "analyze_screen":
+            try:
+                from tools import computer
+                from brain import analyze_screen
+                image_path = computer.screenshot()
+                return analyze_screen(
+                    image_path=image_path,
+                    question=target or "Опиши, що зараз видно на екрані.",
+                    context=self.memory.context(),
+                )
+            except Exception as e:
+                print(f"[agent] Vision error: {e}")
+                return "Не вдалося проаналізувати екран."
 
-            if action == "mouse_move":
-                parts = target.replace(",", " ").split()
-                if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
-                    return "Потрібні координати X Y."
-                return computer.mouse_move(int(parts[0]), int(parts[1]))
+        if action in ("mouse_move", "click", "double_click", "type_text", "press_key", "hotkey", "mouse_position"):
+            try:
+                from tools import computer
 
-            if action in ("click", "double_click"):
-                parts = target.replace(",", " ").split()
-                if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
-                    return "Потрібні координати X Y."
-                function = computer.click if action == "click" else computer.double_click
-                return function(int(parts[0]), int(parts[1]))
+                if action == "mouse_position":
+                    return computer.get_mouse_position()
 
-            if action == "type_text":
-                return computer.type_text(target)
+                if action == "mouse_move":
+                    parts = target.replace(",", " ").split()
+                    if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
+                        return "Потрібні координати X Y."
+                    return computer.mouse_move(int(parts[0]), int(parts[1]))
 
-            if action == "press_key":
-                return computer.press(target)
+                if action in ("click", "double_click"):
+                    parts = target.replace(",", " ").split()
+                    if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
+                        return "Потрібні координати X Y."
+                    function = computer.click if action == "click" else computer.double_click
+                    return function(int(parts[0]), int(parts[1]))
 
-            if action == "hotkey":
-                keys = [key.strip() for key in target.split("+") if key.strip()]
-                return computer.hotkey(*keys)
+                if action == "type_text":
+                    return computer.type_text(target)
+
+                if action == "press_key":
+                    return computer.press(target)
+
+                if action == "hotkey":
+                    keys = [key.strip() for key in target.split("+") if key.strip()]
+                    return computer.hotkey(*keys)
+            except Exception as e:
+                print(f"[agent] Computer control error: {e}")
+                return "Не вдалося виконати дію на комп'ютері."
 
         if action == "analyze_memory":
             try:
