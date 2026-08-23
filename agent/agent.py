@@ -138,15 +138,27 @@ class JarvisAgent:
         for index, step in enumerate(steps, start=1):
             if not isinstance(step, dict):
                 continue
+
             action = step.get("action", "unknown")
             target = str(step.get("target", "") or "").strip()
+
             if action in ("unknown", "multi_action", "chat", "stop"):
                 continue
 
             print(f"[agent] Plan step {index}: {action} -> {target}")
             result = str(self.execute(action, target, "") or "").strip()
             results.append(result)
-            time.sleep(0.35)
+
+            # Запуск GUI-програми асинхронний. Даємо Windows час
+            # створити вікно та передати йому фокус перед наступною дією.
+            if action == "open_app":
+                time.sleep(1.5)
+            elif action in ("hotkey", "press_key"):
+                time.sleep(0.25)
+            elif action == "type_text":
+                time.sleep(0.15)
+            else:
+                time.sleep(0.35)
 
         if not results:
             return "Не вдалося виконати план."
@@ -228,7 +240,11 @@ class JarvisAgent:
                 from tools import computer
                 from brain import analyze_screen
                 image_path = computer.screenshot()
-                return analyze_screen(image_path=image_path, question=target or "Опиши, що зараз видно на екрані.", context=self.memory.context())
+                return analyze_screen(
+                    image_path=image_path,
+                    question=target or "Опиши, що зараз видно на екрані.",
+                    context=self.memory.context(),
+                )
             except Exception as e:
                 print(f"[agent] Vision error: {e}")
                 return "Не вдалося проаналізувати екран."
@@ -236,23 +252,29 @@ class JarvisAgent:
         if action in ("mouse_move", "click", "double_click", "type_text", "press_key", "hotkey", "mouse_position"):
             try:
                 from tools import computer
+
                 if action == "mouse_position":
                     return computer.get_mouse_position()
+
                 if action == "mouse_move":
                     parts = target.replace(",", " ").split()
                     if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
                         return "Потрібні координати X Y."
                     return computer.mouse_move(int(parts[0]), int(parts[1]))
+
                 if action in ("click", "double_click"):
                     parts = target.replace(",", " ").split()
                     if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
                         return "Потрібні координати X Y."
                     function = computer.click if action == "click" else computer.double_click
                     return function(int(parts[0]), int(parts[1]))
+
                 if action == "type_text":
                     return computer.type_text(target)
+
                 if action == "press_key":
                     return computer.press(target)
+
                 if action == "hotkey":
                     keys = [key.strip() for key in target.split("+") if key.strip()]
                     return computer.hotkey(*keys)
