@@ -12,6 +12,49 @@ class JarvisAgent:
         self.last_action = None
         self.last_target = None
 
+    def _resolve_follow_up(self, command: str, action: str, target: str):
+        """Розв'язує короткі follow-up команди через попередній стан."""
+        normalized = command.lower().strip().replace("ё", "е")
+        words = normalized.split()
+
+        # YouTube: після пошуку "перше/друге/відкрий 2" має посилатися
+        # на збережений список результатів, а не йти в GPT як нова назва.
+        if action == "open_video_result" or any(
+            phrase in normalized
+            for phrase in ("перше відео", "друге відео", "третє відео", "перше", "друге", "третє")
+        ):
+            from tools import browser
+            if browser.has_last_results():
+                if action == "open_video_result":
+                    try:
+                        return "open_video_result", str(int(target))
+                    except (ValueError, TypeError):
+                        pass
+                numbers = {"перше": 1, "друге": 2, "третє": 3}
+                for word, number in numbers.items():
+                    if word in words:
+                        return "open_video_result", str(number)
+                for word in words:
+                    if word.isdigit():
+                        return "open_video_result", word
+
+        # "закрий його", "відкрий її", "включи це" тощо.
+        reference_words = ("його", "її", "це", "цей", "цю", "там", "той", "те")
+        has_reference = any(word in normalized for word in reference_words)
+
+        if action == "close_app" and not target and self.last_action == "open_app":
+            return "close_app", self.last_target or ""
+
+        if has_reference and self.last_target:
+            if action in ("close_app", "open_app") and self.last_action in ("open_app", "close_app"):
+                return action, self.last_target
+            if action == "find_content" and self.last_action == "find_content":
+                return action, self.last_target
+            if action == "play_music" and self.last_action == "play_music":
+                return action, self.last_target
+
+        return action, target
+
     def process(self, command: str) -> str:
         if not command or not command.strip():
             return "Я не почув команду."
@@ -42,6 +85,9 @@ class JarvisAgent:
 
             action = decision.get("action", "unknown")
             target = str(decision.get("target", "") or "").strip()
+
+            action, target = self._resolve_follow_up(command, action, target)
+
             response = str(self.execute(action, target, command) or "").strip()
 
             self.last_action = action
