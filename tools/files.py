@@ -13,8 +13,51 @@ except ImportError:
     send2trash = None
 
 
+SEARCH_SKIP_DIRS = {"AppData", ".git", "__pycache__", "node_modules", "venv"}
+
+
+def _search_roots():
+    home = os.path.expanduser("~")
+    return [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Documents"),
+        os.path.join(home, "Downloads"),
+    ]
+
+
+def _find_file_paths(name: str, limit: int = 10):
+    name = os.path.basename(str(name).strip().strip('"'))
+    if not name:
+        return []
+
+    wanted = name.lower()
+    matches = []
+    seen = set()
+
+    for root in _search_roots():
+        if not os.path.isdir(root):
+            continue
+        try:
+            for current_root, dirs, filenames in os.walk(root):
+                dirs[:] = [d for d in dirs if d not in SEARCH_SKIP_DIRS]
+                for filename in filenames:
+                    if filename.lower() != wanted:
+                        continue
+                    full = os.path.abspath(os.path.join(current_root, filename))
+                    key = os.path.normcase(full)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matches.append(full)
+                    if len(matches) >= limit:
+                        return matches
+        except (OSError, PermissionError):
+            continue
+
+    return matches
+
+
 def open_path(path: str) -> str:
-    """Відкрити файл або папку стандартною програмою Windows."""
     path = os.path.abspath(os.path.expanduser(str(path).strip().strip('"')))
     if not os.path.exists(path):
         return f"Шлях не знайдено: {path}"
@@ -23,48 +66,11 @@ def open_path(path: str) -> str:
 
 
 def find_file(name: str) -> str:
-    """Знайти файл локально, без Google/GPT."""
-    name = os.path.basename(str(name).strip().strip('"'))
-    if not name:
-        return "Не вказана назва файлу."
-
-    home = os.path.expanduser("~")
-    roots = [
-        os.path.join(home, "Desktop"),
-        os.path.join(home, "Documents"),
-        os.path.join(home, "Downloads"),
-    ]
-
-    skip_dirs = {"AppData", ".git", "__pycache__", "node_modules", "venv"}
-    wanted = name.lower()
-    matches = []
-    seen = set()
-
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        try:
-            for current_root, dirs, filenames in os.walk(root):
-                dirs[:] = [d for d in dirs if d not in skip_dirs]
-                for filename in filenames:
-                    if filename.lower() != wanted:
-                        continue
-                    path = os.path.normcase(os.path.abspath(os.path.join(current_root, filename)))
-                    if path in seen:
-                        continue
-                    seen.add(path)
-                    matches.append(os.path.abspath(os.path.join(current_root, filename)))
-                    if len(matches) >= 10:
-                        break
-                if len(matches) >= 10:
-                    break
-        except (OSError, PermissionError):
-            continue
-        if len(matches) >= 10:
-            break
+    matches = _find_file_paths(name)
+    clean_name = os.path.basename(str(name).strip().strip('"'))
 
     if not matches:
-        return f"Файл не знайдено: {name}"
+        return f"Файл не знайдено: {clean_name}"
 
     if len(matches) == 1:
         os.startfile(matches[0])
@@ -75,37 +81,46 @@ def find_file(name: str) -> str:
     )
 
 
+def open_file(name: str) -> str:
+    matches = _find_file_paths(name)
+    clean_name = os.path.basename(str(name).strip().strip('"'))
+
+    if not matches:
+        return f"Файл не знайдено: {clean_name}"
+
+    if len(matches) > 1:
+        return "Знайшов кілька файлів:\n" + "\n".join(
+            f"{i}. {path}" for i, path in enumerate(matches, 1)
+        ) + "\nСкажи номер потрібного файлу."
+
+    os.startfile(matches[0])
+    return f"Відкриваю файл: {matches[0]}"
+
+
 def find_folder(name: str) -> str:
-    """Знайти папку локально."""
     name = str(name).strip().strip('"')
     if not name:
         return "Не вказана назва папки."
-
-    home = os.path.expanduser("~")
-    roots = [
-        os.path.join(home, "Desktop"),
-        os.path.join(home, "Documents"),
-        os.path.join(home, "Downloads"),
-    ]
 
     wanted = name.lower()
     matches = []
     seen = set()
 
-    for root in roots:
+    for root in _search_roots():
         if not os.path.isdir(root):
             continue
         try:
             for current_root, dirs, _ in os.walk(root):
-                dirs[:] = [d for d in dirs if d not in {"AppData", ".git", "__pycache__", "node_modules", "venv"}]
+                dirs[:] = [d for d in dirs if d not in SEARCH_SKIP_DIRS]
                 for dirname in dirs:
                     if dirname.lower() != wanted:
                         continue
-                    path = os.path.normcase(os.path.abspath(os.path.join(current_root, dirname)))
-                    if path in seen:
+                    full = os.path.abspath(os.path.join(current_root, dirname))
+                    key = os.path.normcase(full)
+                    if key in seen:
                         continue
-                    seen.add(path)
-                    matches.append(os.path.abspath(os.path.join(current_root, dirname)))
+                    seen.add(key)
+                    matches.append(full)
                     if len(matches) >= 10:
                         break
                 if len(matches) >= 10:
@@ -128,13 +143,15 @@ def find_folder(name: str) -> str:
 
 
 def _delete_question(path: str) -> str:
-    size = _human_size(path)
-    return f"Видалити:\n  {path}\n  Розмір: {size}\nФайл буде переміщено у кошик, не видалено назавжди."
+    return (
+        f"Видалити:\n  {path}\n"
+        f"Розмір: {_human_size(path)}\n"
+        f"Файл буде переміщено у кошик, не видалено назавжди."
+    )
 
 
 @requires_confirmation(description_fn=_delete_question)
 def delete(path: str) -> str:
-    """Видалити файл або папку у кошик з підтвердженням."""
     path = os.path.abspath(os.path.expanduser(str(path).strip().strip('"')))
     if not os.path.exists(path):
         raise FileNotFoundError(path)
@@ -142,6 +159,21 @@ def delete(path: str) -> str:
         raise RuntimeError("Встанови залежність: pip install Send2Trash")
     send2trash.send2trash(path)
     return f"Видалено (у кошику): {path}"
+
+
+def delete_file(name: str) -> str:
+    matches = _find_file_paths(name)
+    clean_name = os.path.basename(str(name).strip().strip('"'))
+
+    if not matches:
+        return f"Файл не знайдено: {clean_name}"
+
+    if len(matches) > 1:
+        return "Знайшов кілька файлів:\n" + "\n".join(
+            f"{i}. {path}" for i, path in enumerate(matches, 1)
+        ) + "\nСкажи номер потрібного файлу, щоб видалити його."
+
+    return delete(matches[0])
 
 
 def _human_size(path: str) -> str:
