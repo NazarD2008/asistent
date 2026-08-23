@@ -1,9 +1,6 @@
-"""
-JARVIS Brain
+"""JARVIS Brain - intent parsing and screen vision."""
 
-Розуміння складних команд через GPT.
-"""
-
+import base64
 import json
 import os
 
@@ -29,8 +26,8 @@ ALLOWED_ACTIONS = {
     "open_app", "close_app", "play_music", "play_video",
     "open_video_result", "find_content", "open_url", "web_search",
     "find_file", "open_file", "find_folder", "open_path", "delete_file",
-    "screenshot", "mouse_move", "click", "double_click", "type_text",
-    "press_key", "hotkey", "mouse_position",
+    "screenshot", "analyze_screen", "mouse_move", "click", "double_click",
+    "type_text", "press_key", "hotkey", "mouse_position",
     "analyze_memory", "set_volume", "volume_up", "volume_down", "mute", "unmute",
     "shutdown", "restart", "stop", "chat", "unknown",
 }
@@ -53,8 +50,8 @@ target завжди рядок.
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
 find_content, open_url, web_search, find_file, open_file, find_folder,
-open_path, delete_file, screenshot, mouse_move, click, double_click,
-type_text, press_key, hotkey, mouse_position, analyze_memory,
+open_path, delete_file, screenshot, analyze_screen, mouse_move, click,
+double_click, type_text, press_key, hotkey, mouse_position, analyze_memory,
 set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
 stop, chat, unknown
 
@@ -80,9 +77,15 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 "знайди папку Downloads" -> find_folder / "Downloads"
 "видали файл test.txt" -> delete_file / "test.txt"
 
-ЕКРАН І КЛАВІАТУРА:
+ЕКРАН:
 "зроби скріншот" -> screenshot / ""
-"зроби знімок екрана" -> screenshot / ""
+"що на екрані" -> analyze_screen / "опиши, що зараз на екрані"
+"подивись на екран" -> analyze_screen / "опиши, що зараз на екрані"
+"що відкрито на екрані" -> analyze_screen / "визнач, які програми та вікна зараз відкриті"
+Якщо користувач просить щось конкретне про те, що видно на екрані,
+використовуй analyze_screen і передай запит користувача в target.
+
+МАШИНА:
 "покажи координати миші" -> mouse_position / ""
 "перемісти мишку на 500 300" -> mouse_move / "500 300"
 "клікни на 500 300" -> click / "500 300"
@@ -92,7 +95,6 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 "натисни Enter" -> press_key / "enter"
 "натисни Ctrl+L" -> hotkey / "ctrl+l"
 
-Координатні mouse/click дії використовуй тільки коли користувач явно дав координати.
 Не вигадуй координати.
 
 FOLLOW-UP:
@@ -149,6 +151,66 @@ def _parse_command(command: str, context=None):
     except Exception as e:
         print(f"[brain] GPT parser error: {e}")
         return {"action": "unknown", "target": ""}
+
+
+def analyze_screen(image_path: str, question: str, context=None) -> str:
+    """Передати скріншот у vision-enabled GPT і отримати опис/відповідь."""
+    if not client:
+        return "OpenAI client недоступний."
+
+    try:
+        with open(image_path, "rb") as image_file:
+            base64_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+        input_items = [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": (
+                            "Ти бачиш поточний екран Windows JARVIS. "
+                            "Відповідай українською, тільки на основі того, що реально видно. "
+                            "Не вигадуй кнопки, програми, текст або координати.\n\n"
+                            f"Запит користувача: {question}"
+                        ),
+                    },
+                    {
+                        "type": "input_image",
+                        "image_url": f"data:image/png;base64,{base64_image}",
+                        "detail": "high",
+                    },
+                ],
+            }
+        ]
+
+        if context:
+            input_items.insert(
+                0,
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": f"Контекст діалогу: {json.dumps(context[-6:], ensure_ascii=False)}",
+                        }
+                    ],
+                },
+            )
+
+        response = client.responses.create(
+            model=AZURE_OPENAI_MODEL,
+            input=input_items,
+        )
+        answer = response.output_text.strip()
+        print(f"[brain] Vision: {answer}")
+        return answer or "Не вдалося зрозуміти, що на екрані."
+
+    except FileNotFoundError:
+        return "Скріншот не знайдено."
+    except Exception as e:
+        print(f"[brain] Vision error: {e}")
+        return "Не вдалося проаналізувати екран."
 
 
 def handle(command: str, context=None):
