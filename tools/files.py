@@ -1,15 +1,13 @@
 """
 tools/files.py
 Робота з файлами та папками.
-Видалення йде через кошик (send2trash), а не os.remove() —
-тобто навіть підтверджену дію можна відкотити вручну, і вимагає підтвердження.
 """
 
 import os
 from permissions import requires_confirmation
 
 try:
-    import send2trash  # pip install Send2Trash
+    import send2trash
 except ImportError:
     send2trash = None
 
@@ -20,6 +18,53 @@ def open_path(path: str) -> str:
         return f"Шлях не знайдено: {path}"
     os.startfile(path)
     return f"Відкрито: {path}"
+
+
+def find_file(name: str) -> str:
+    """Знайти файл локально, без Google/GPT."""
+    name = os.path.basename(str(name).strip().strip('"'))
+    if not name:
+        return "Не вказана назва файлу."
+
+    home = os.path.expanduser("~")
+    roots = [
+        os.path.join(home, "Desktop"),
+        os.path.join(home, "Documents"),
+        os.path.join(home, "Downloads"),
+        home,
+    ]
+    roots = list(dict.fromkeys(r for r in roots if os.path.isdir(r)))
+
+    skip_dirs = {"AppData", ".git", "__pycache__", "node_modules", "venv"}
+    wanted = name.lower()
+    matches = []
+
+    for root in roots:
+        try:
+            for current_root, dirs, filenames in os.walk(root):
+                dirs[:] = [d for d in dirs if d not in skip_dirs]
+                for filename in filenames:
+                    if filename.lower() == wanted:
+                        matches.append(os.path.join(current_root, filename))
+                        if len(matches) >= 5:
+                            break
+                if len(matches) >= 5:
+                    break
+        except (OSError, PermissionError):
+            continue
+        if len(matches) >= 5:
+            break
+
+    if not matches:
+        return f"Файл не знайдено: {name}"
+
+    if len(matches) == 1:
+        os.startfile(matches[0])
+        return f"Знайшов і відкрив: {matches[0]}"
+
+    return "Знайшов файли:\n" + "\n".join(
+        f"{i}. {path}" for i, path in enumerate(matches, 1)
+    )
 
 
 def _delete_question(path: str) -> str:
