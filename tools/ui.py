@@ -44,7 +44,6 @@ def inspect_ui(max_depth: int = 6, max_items: int = 140) -> str:
     root = auto.GetForegroundControl()
     if root is None:
         return "Не вдалося отримати foreground-вікно."
-
     lines = []
     seen = 0
 
@@ -83,7 +82,6 @@ def find_element(name: str):
     root = auto.GetForegroundControl()
     if root is None:
         return None
-
     try:
         exact = root.Control(searchDepth=15, Name=query)
         if exact.Exists(0.7):
@@ -116,14 +114,12 @@ def _foreground_process_name() -> str:
     try:
         import ctypes
         import psutil
-
         hwnd = ctypes.windll.user32.GetForegroundWindow()
         if not hwnd:
             return ""
         pid = ctypes.c_ulong()
         ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        process = psutil.Process(pid.value)
-        return process.name().lower()
+        return psutil.Process(pid.value).name().lower()
     except Exception:
         return ""
 
@@ -132,7 +128,6 @@ def _is_pycharm() -> bool:
     process_name = _foreground_process_name()
     if process_name in {"pycharm64.exe", "pycharm.exe"}:
         return True
-
     if auto is None:
         return False
     try:
@@ -147,46 +142,70 @@ def _pycharm_open_file(name: str) -> str | None:
     """Open an exact project file in PyCharm without pixel clicking or keyboard leakage."""
     if not _is_pycharm() or not _is_text_target(name):
         return None
-
     try:
         import pyautogui
         import pyperclip
-
         print(f"[ui] PyCharm direct navigation: {name}")
-
-        # Ctrl+Shift+N = Navigate to File in PyCharm.
         pyautogui.hotkey("ctrl", "shift", "n")
         time.sleep(0.7)
-
-        # Clipboard avoids layout-dependent typing and prevents punctuation such
-        # as '.' from leaking into the JARVIS console on the wrong focus target.
         previous_clipboard = None
         try:
             previous_clipboard = pyperclip.paste()
         except Exception:
             pass
-
         pyperclip.copy(name)
         pyautogui.hotkey("ctrl", "a")
         pyautogui.hotkey("ctrl", "v")
         time.sleep(0.35)
         pyautogui.press("enter")
         time.sleep(0.8)
-
         if previous_clipboard is not None:
             try:
                 pyperclip.copy(previous_clipboard)
             except Exception:
                 pass
-
         return f"PYCHARM_OPENED:{name}"
     except Exception as exc:
         print(f"[ui] PyCharm navigation failed: {exc}")
         return None
 
 
+def _ocr_click(name: str) -> str | None:
+    try:
+        from tools import ocr
+        return ocr.click_text(name)
+    except Exception as exc:
+        print(f"[ocr] unavailable: {exc}")
+        return None
+
+
+def _before_after_click(x: int, y: int) -> bool:
+    try:
+        import pyautogui
+        before = pyautogui.screenshot().convert("RGB")
+        pyautogui.moveTo(x, y, duration=0.05)
+        pyautogui.click()
+        time.sleep(0.35)
+        after = pyautogui.screenshot().convert("RGB")
+        left, top = max(0, x - 40), max(0, y - 40)
+        right, bottom = min(before.width, x + 41), min(before.height, y + 41)
+        changed = total = 0
+        for yy in range(top, bottom, 8):
+            for xx in range(left, right, 8):
+                total += 1
+                a, b = before.getpixel((xx, yy)), after.getpixel((xx, yy))
+                if sum(abs(a[i] - b[i]) for i in range(3)) > 45:
+                    changed += 1
+        score = changed / max(total, 1)
+        print(f"[ui] Click verify: changed={score:.2%}")
+        return score >= 0.01
+    except Exception as exc:
+        print(f"[ui] Click verify unavailable: {exc}")
+        return True
+
+
 def click_element(name: str) -> str:
-    """Deterministic UIA -> app-specific route -> OmniParser -> LLM Vision."""
+    """UIA -> app-specific -> OCR -> OmniParser -> LLM Vision."""
     direct = _pycharm_open_file(name)
     if direct:
         return direct
@@ -194,6 +213,10 @@ def click_element(name: str) -> str:
     control = find_element(name)
     if control is None:
         print(f"[ui] UI Automation: не знайдено '{name}'.")
+        if _is_text_target(name) or len(name.strip().split()) <= 3:
+            ocr_result = _ocr_click(name)
+            if ocr_result:
+                return ocr_result
         grounded = _omniparser_click(name)
         if grounded:
             return grounded
@@ -204,16 +227,20 @@ def click_element(name: str) -> str:
         control.SetFocus()
     except Exception:
         pass
-
     try:
         if not control.IsEnabled:
-            print(f"[ui] UI element disabled: {_control_name(control)}. Перемикаюсь далі.")
+            ocr_result = _ocr_click(name)
+            if ocr_result:
+                return ocr_result
             grounded = _omniparser_click(name)
             return grounded or vision_click(name)
         control.Click()
         return f"UI_CLICKED:{_control_name(control)}"
     except Exception as exc:
         print(f"[ui] UI Automation click failed: {exc}. Перемикаюсь далі.")
+        ocr_result = _ocr_click(name)
+        if ocr_result:
+            return ocr_result
         grounded = _omniparser_click(name)
         return grounded or vision_click(name)
 
@@ -239,13 +266,10 @@ def _encode_image(image, quality: int = 58) -> str:
 def _target_hint(name: str) -> str:
     q = name.strip().lower()
     if _is_text_target(q):
-        return (
-            "Це назва текстового файла. Якщо це IDE, шукай точний текст у дереві файлів. "
-            "НЕ обирай вкладку редактора, код або схожий файл. Якщо точний файл не видно, found=false."
-        )
+        return "Це назва текстового файла. Шукай точний текст у дереві файлів, не вкладці й не коді."
     if any(word in q for word in ("шестер", "gear", "settings", "налаштуван")):
         return "Це іконка шестерні/налаштувань. Вибирай лише справжній значок шестерні."
-    return "Знаходь саме названий елемент, не схожий об'єкт. Якщо є неоднозначність, found=false."
+    return "Знаходь саме названий елемент, не схожий об'єкт. При неоднозначності found=false."
 
 
 def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int]]:
@@ -255,26 +279,19 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
     model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5-mini")
     if not key or not endpoint:
         raise RuntimeError("VISION_UNAVAILABLE")
-
     from openai import OpenAI
-
     prompt = (
         f"Знайди на screenshot елемент '{name}'. {_target_hint(name)} "
         "Поверни ТІЛЬКИ JSON без markdown: "
         "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
-        "x,y = центр елемента в пікселях поточного screenshot. "
-        "Не роби припущень; при сумніві found=false."
+        "x,y = центр елемента в пікселях поточного screenshot. Не роби припущень."
     )
-
     response = OpenAI(api_key=key, base_url=endpoint).responses.create(
         model=model,
-        input=[{
-            "role": "user",
-            "content": [
-                {"type": "input_text", "text": prompt},
-                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{_encode_image(image)}", "detail": detail},
-            ],
-        }],
+        input=[{"role": "user", "content": [
+            {"type": "input_text", "text": prompt},
+            {"type": "input_image", "image_url": f"data:image/jpeg;base64,{_encode_image(image)}", "detail": detail},
+        ]}],
     )
     raw = response.output_text.strip()
     data = json.loads(raw.replace("```json", "").replace("```", "").strip())
@@ -286,36 +303,28 @@ def _omniparser_click(name: str) -> str | None:
         from tools import omniparser
         if not omniparser.is_available():
             return None
-
         image, size = _capture_screen()
         element = omniparser.ground(_encode_png(image), name)
         if not element:
             print(f"[omniparser] Точного елемента '{name}' не знайдено.")
             return None
-
         x, y = omniparser.center(element, size)
         print(f"[omniparser] '{name}' -> {x},{y} element={element.get('id')}")
-        import pyautogui
-        pyautogui.moveTo(x, y, duration=0.05)
-        pyautogui.click()
-        time.sleep(0.25)
-        return f"OMNI_CLICKED:{name}:{x},{y}"
+        verified = _before_after_click(x, y)
+        return f"OMNI_CLICKED:{name}:{x},{y}:verified={verified}"
     except Exception as exc:
         print(f"[omniparser] grounding error: {exc}")
         return None
 
 
 def vision_click(name: str) -> str:
-    """Last-resort LLM vision click. Slow but kept as universal fallback."""
+    """Last-resort LLM vision click."""
     if not name:
         return "VISION_NO_TARGET"
-
     try:
         import pyautogui
-
         started = time.perf_counter()
         image, image_size = _capture_screen()
-
         if _is_text_target(name):
             data, image_size = _vision_request(name, "high", image)
         else:
@@ -323,28 +332,17 @@ def vision_click(name: str) -> str:
             confidence = float(data.get("confidence", 0) or 0)
             if (not data.get("found")) or confidence < 0.80:
                 data, image_size = _vision_request(name, "high", image)
-
         if not data.get("found"):
             return f"Елемент '{name}' не знайдено через Vision."
-
         confidence = float(data.get("confidence", 0) or 0)
         if confidence < 0.75:
             return f"Vision знайшов '{name}', але впевненість недостатня ({confidence:.2f})."
-
-        x = int(data.get("x", -1))
-        y = int(data.get("y", -1))
+        x, y = int(data.get("x", -1)), int(data.get("y", -1))
         if not (0 <= x < image_size[0] and 0 <= y < image_size[1]):
             return "Vision повернув некоректні координати."
-
-        print(
-            f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f} "
-            f"latency={time.perf_counter() - started:.2f}s"
-        )
-        pyautogui.moveTo(x, y, duration=0.05)
-        pyautogui.click()
-        time.sleep(0.25)
-        return f"VISION_CLICKED:{name}:{x},{y}"
-
+        print(f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f} latency={time.perf_counter() - started:.2f}s")
+        verified = _before_after_click(x, y)
+        return f"VISION_CLICKED:{name}:{x},{y}:verified={verified}"
     except Exception as exc:
         print(f"[ui] Vision fallback error: {exc}")
         return f"VISION_ERROR:{exc}"
