@@ -24,11 +24,7 @@ class JarvisAgent:
     def _resolve_follow_up(self, command: str, action: str, target: str):
         normalized = command.lower().strip().replace("ё", "е")
         words = normalized.split()
-
-        if action == "open_video_result" or any(
-            phrase in normalized
-            for phrase in ("перше відео", "друге відео", "третє відео", "перше", "друге", "третє")
-        ):
+        if action == "open_video_result" or any(phrase in normalized for phrase in ("перше відео", "друге відео", "третє відео", "перше", "друге", "третє")):
             from tools import browser
             if browser.has_last_results():
                 if action == "open_video_result":
@@ -46,10 +42,8 @@ class JarvisAgent:
 
         reference_words = ("його", "її", "це", "цей", "цю", "там", "той", "те")
         has_reference = any(word in normalized for word in reference_words)
-
         if action == "close_app" and not target and self.last_action == "open_app":
             return "close_app", self.last_target or ""
-
         if has_reference and self.last_target:
             if action in ("close_app", "open_app") and self.last_action in ("open_app", "close_app"):
                 return action, self.last_target
@@ -57,19 +51,15 @@ class JarvisAgent:
                 return action, self.last_target
             if action == "play_music" and self.last_action == "play_music":
                 return action, self.last_target
-
         return action, target
 
     def process(self, command: str) -> str:
         if not command or not command.strip():
             return "Я не почув команду."
-
         command = command.strip()
         print(f"[agent] Команда: {command}")
-
         try:
             normalized = command.lower().strip().replace("ё", "е")
-
             if normalized in ("стоп", "вихід", "вийти", "exit", "quit"):
                 self.follow_up_active = False
                 response = "До зустрічі."
@@ -110,18 +100,14 @@ class JarvisAgent:
                 return response
 
             action, target = self._resolve_follow_up(command, action, target)
-
             response = str(self.execute(action, target, command) or "").strip()
-
             self.last_action = action
             self.last_target = target
             self.memory.remember(command, response, action=action, target=target)
-
             print(f"[agent] Action: {action}")
             print(f"[agent] Target: {target}")
             print(f"[agent] Відповідь: {response}")
             return response
-
         except Exception as e:
             print(f"[agent] ПОМИЛКА: {e}")
             response = "Сталася помилка під час обробки команди."
@@ -133,10 +119,8 @@ class JarvisAgent:
     def _execute_plan(self, steps) -> str:
         if not isinstance(steps, list) or not steps:
             return "Не вдалося побудувати план дій."
-
         results = []
         active_app = None
-
         for index, step in enumerate(steps, start=1):
             if not isinstance(step, dict):
                 continue
@@ -144,11 +128,9 @@ class JarvisAgent:
             target = str(step.get("target", "") or "").strip()
             if action in ("unknown", "multi_action", "chat", "stop"):
                 continue
-
             print(f"[agent] Plan step {index}: {action} -> {target}")
             result = str(self.execute(action, target, "") or "").strip()
             results.append(result)
-
             if action == "open_app":
                 active_app = target
                 time.sleep(0.8)
@@ -158,7 +140,6 @@ class JarvisAgent:
                     print(f"[agent] Focus {target}: {'OK' if focused else 'not found'}")
                 except Exception as e:
                     print(f"[agent] Focus error: {e}")
-
             elif active_app and action in ("hotkey", "press_key", "type_text", "click", "double_click"):
                 try:
                     from tools import computer
@@ -166,17 +147,11 @@ class JarvisAgent:
                     time.sleep(0.15)
                 except Exception as e:
                     print(f"[agent] Refocus error: {e}")
-
             time.sleep(0.2)
-
         if not results:
             return "Не вдалося виконати план."
-
         meaningful = [r for r in results if r]
-        if not meaningful:
-            return "Готово."
-
-        return "Готово. " + " ".join(meaningful[-2:])
+        return "Готово. " + " ".join(meaningful[-2:]) if meaningful else "Готово."
 
     def execute(self, action: str, target: str = "", command: str = "") -> str:
         action = action or "unknown"
@@ -186,28 +161,22 @@ class JarvisAgent:
 
         if action in ("find_file", "open_file", "delete_file", "find_folder"):
             from tools import files
-            function = getattr(files, action)
-            return str(function(target))
-
+            return str(getattr(files, action)(target))
         if action == "open_path":
             from tools import files
             return str(files.open_path(target))
-
         if action == "open_app":
             from tools import apps
             return apps.open_app(target)
-
         if action == "close_app":
             from tools import apps
             return apps.close_app(target)
-
         if action == "play_video":
             from tools import browser
             result = browser.play_video(target)
             if browser.has_last_results():
                 return f"Знайшов {len(browser.get_last_results())} відео. Яке відкрити?"
             return result
-
         if action == "open_video_result":
             from tools import browser
             try:
@@ -215,26 +184,49 @@ class JarvisAgent:
             except (ValueError, TypeError):
                 return "Не зрозумів номер відео."
             return browser.open_video_number(number)
-
         if action == "play_music":
             from tools import browser
             return browser.play_music(target)
-
         if action == "find_content":
             from tools import browser
             return browser.find_content(target)
-
         if action == "open_url":
             from tools import browser
             return browser.open_url(target)
-
         if action == "web_search":
             from tools import browser
             if not target:
                 return "Не вказаний пошуковий запит."
             import urllib.parse
-            search_url = "https://www.google.com/search?q=" + urllib.parse.quote(target)
-            return browser.open_url(search_url)
+            return browser.open_url("https://www.google.com/search?q=" + urllib.parse.quote(target))
+
+        if action == "browser_search":
+            try:
+                from tools import web_agent
+                site, query = (target.split("|", 1) + [""])[:2] if "|" in target else ("google", target)
+                return web_agent.search(query.strip(), site.strip())
+            except Exception as e:
+                print(f"[agent] Browser agent error: {e}")
+                from tools import browser
+                if target.startswith("youtube|"):
+                    return browser.play_video(target.split("|", 1)[1])
+                return browser.open_url("https://www.google.com/search?q=" + __import__("urllib.parse").parse.quote(target))
+
+        if action == "browser_open":
+            from tools import web_agent
+            return web_agent.open_page(target)
+        if action == "browser_click_text":
+            from tools import web_agent
+            return web_agent.click_text(target)
+        if action == "browser_type":
+            from tools import web_agent
+            return web_agent.type_text(target)
+        if action == "browser_press":
+            from tools import web_agent
+            return web_agent.press(target)
+        if action == "browser_current":
+            from tools import web_agent
+            return web_agent.current_page()
 
         if action == "inspect_ui":
             try:
@@ -243,7 +235,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] UI Automation error: {e}")
                 return "Не вдалося прочитати елементи активного вікна."
-
         if action == "ui_click":
             try:
                 from tools import ui
@@ -251,7 +242,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] UI click error: {e}")
                 return "Не вдалося натиснути UI-елемент."
-
         if action == "foreground_window":
             try:
                 from tools import ui
@@ -259,7 +249,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] UI foreground error: {e}")
                 return "Не вдалося визначити активне вікно."
-
         if action == "screenshot":
             try:
                 from tools import computer
@@ -267,13 +256,11 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] Screenshot error: {e}")
                 return "Не вдалося зробити скріншот."
-
         if action == "analyze_screen":
             try:
                 from tools import computer
                 from brain import analyze_screen
-                image_path = computer.screenshot()
-                return analyze_screen(image_path=image_path, question=target or "Опиши, що зараз видно на екрані.", context=self.memory.context())
+                return analyze_screen(image_path=computer.screenshot(), question=target or "Опиши, що зараз видно на екрані.", context=self.memory.context())
             except Exception as e:
                 print(f"[agent] Vision error: {e}")
                 return "Не вдалося проаналізувати екран."
@@ -292,19 +279,16 @@ class JarvisAgent:
                     parts = target.replace(",", " ").split()
                     if len(parts) != 2 or not all(part.lstrip("-").isdigit() for part in parts):
                         return "Потрібні координати X Y."
-                    function = computer.click if action == "click" else computer.double_click
-                    return function(int(parts[0]), int(parts[1]))
+                    return (computer.click if action == "click" else computer.double_click)(int(parts[0]), int(parts[1]))
                 if action == "type_text":
                     return computer.type_text(target)
                 if action == "press_key":
                     return computer.press(target)
                 if action == "hotkey":
-                    keys = [key.strip() for key in target.split("+") if key.strip()]
-                    return computer.hotkey(*keys)
+                    return computer.hotkey(*[key.strip() for key in target.split("+") if key.strip()])
             except Exception as e:
                 print(f"[agent] Computer control error: {e}")
                 return "Не вдалося виконати дію на комп'ютері."
-
         if action == "analyze_memory":
             try:
                 from disk_analyzer import analyze_memory
@@ -312,7 +296,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] Memory analysis error: {e}")
                 return "Не вдалося проаналізувати пам'ять комп'ютера."
-
         if action in ("set_volume", "volume_up", "volume_down", "mute", "unmute"):
             try:
                 from tools import system
@@ -321,7 +304,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] System audio error: {e}")
                 return "Не вдалося змінити гучність."
-
         if action == "shutdown":
             try:
                 from tools import system
@@ -329,7 +311,6 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] Shutdown error: {e}")
                 return "Не вдалося вимкнути комп'ютер."
-
         if action == "restart":
             try:
                 from tools import system
@@ -337,14 +318,11 @@ class JarvisAgent:
             except Exception as e:
                 print(f"[agent] Restart error: {e}")
                 return "Не вдалося перезавантажити комп'ютер."
-
         if action == "chat":
             return target or "Так, слухаю."
-
         if action == "stop":
             self.follow_up_active = False
             return "До зустрічі."
-
         return "Не зовсім зрозумів команду."
 
     def set_follow_up(self, active: bool):
@@ -353,21 +331,11 @@ class JarvisAgent:
 
     def is_follow_up_active(self):
         return self.follow_up_active
-
-    def get_context(self):
-        return self.memory.context()
-
-    def get_last_command(self):
-        return self.memory.last_command
-
-    def get_last_result(self):
-        return self.memory.last_result
-
-    def get_last_action(self):
-        return self.last_action
-
-    def get_last_target(self):
-        return self.last_target
+    def get_context(self): return self.memory.context()
+    def get_last_command(self): return self.memory.last_command
+    def get_last_result(self): return self.memory.last_result
+    def get_last_action(self): return self.last_action
+    def get_last_target(self): return self.last_target
 
     def clear_memory(self):
         self.memory.clear()
@@ -379,14 +347,11 @@ class JarvisAgent:
 
 agent = JarvisAgent()
 
-
 def process(command: str) -> str:
     return agent.process(command)
 
-
 def set_follow_up(active: bool):
     agent.set_follow_up(active)
-
 
 def is_follow_up_active():
     return agent.is_follow_up_active()
