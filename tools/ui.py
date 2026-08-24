@@ -49,7 +49,6 @@ def inspect_ui(max_depth: int = 3, max_items: int = 80) -> str:
     root = auto.GetForegroundControl()
     if root is None:
         return "Не вдалося отримати foreground-вікно."
-
     lines = []
     seen = 0
 
@@ -112,10 +111,11 @@ def find_element(name: str):
 
 
 def click_element(name: str) -> str:
-    """UI Automation click. Never reports success unless an element was found and clicked."""
+    """UI Automation first; Vision fallback only when UIA cannot find/click the element."""
     control = find_element(name)
     if control is None:
-        return f"UI_NOT_FOUND:{name}"
+        print(f"[ui] UI Automation: не знайдено '{name}'. Перемикаюсь на Vision.")
+        return vision_click(name)
 
     try:
         control.SetFocus()
@@ -128,7 +128,8 @@ def click_element(name: str) -> str:
         control.Click()
         return f"UI_CLICKED:{_control_name(control)}"
     except Exception as e:
-        return f"UI_CLICK_FAILED:{_control_name(control)}:{e}"
+        print(f"[ui] UI Automation click failed: {e}. Перемикаюсь на Vision.")
+        return vision_click(name)
 
 
 def _screenshot_data():
