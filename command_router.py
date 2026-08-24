@@ -77,6 +77,26 @@ def _route_site(command: str):
     return None
 
 
+def _route_browser(command: str):
+    if _is_compound(command):
+        return None
+    youtube_markers = ("на ютубі", "на ютуб", "в ютубі", "в youtube", "на youtube", "ютуб відео", "youtube відео")
+    search_prefixes = ("знайди ", "знайти ", "пошукай ", "пошук ", "відшукай ")
+    if any(marker in command for marker in youtube_markers):
+        for prefix in search_prefixes:
+            if command.startswith(prefix):
+                query = command[len(prefix):].strip()
+                for marker in youtube_markers:
+                    query = query.replace(marker, "").strip()
+                if query:
+                    return {"action": "browser_search", "target": f"youtube|{query}"}
+    if command.startswith("відкрий сторінку "):
+        target = command[len("відкрий сторінку "):].strip()
+        if target:
+            return {"action": "browser_open", "target": target}
+    return None
+
+
 def _route_file(command: str):
     file_prefixes = (
         ("знайди файл ", "find_file"), ("знайти файл ", "find_file"),
@@ -90,7 +110,6 @@ def _route_file(command: str):
             name = command[len(prefix):].strip()
             if name:
                 return {"action": action, "target": name}
-
     for prefix in ("відкрий папку ", "відкрити папку ", "знайди папку ", "знайти папку "):
         if command.startswith(prefix):
             name = command[len(prefix):].strip()
@@ -102,34 +121,19 @@ def _route_file(command: str):
 def _route_ui(command: str):
     if _is_compound(command):
         return None
-
-    if any(phrase in command for phrase in (
-        "покажи елементи інтерфейсу",
-        "покажи елементи інтерфейса",
-        "покажи ui",
-        "проінспектуй вікно",
-        "інспектуй вікно",
-    )):
+    if any(phrase in command for phrase in ("покажи елементи інтерфейсу", "покажи елементи інтерфейса", "покажи ui", "проінспектуй вікно", "інспектуй вікно")):
         return {"action": "inspect_ui", "target": ""}
-
-    # Будь-яке "натисни/нажми на ..." означає UI-елемент,
-    # а не клавішу. Ключі без "на" обробляються окремо.
     for prefix in (
-        "натисни кнопку ", "натисни на кнопку ",
-        "натисни елемент ", "натисни на елемент ",
-        "натисни на ", "нажми кнопку ", "нажми на кнопку ",
-        "нажми елемент ", "нажми на елемент ", "нажми на ",
-        "клікни кнопку ", "клікни елемент ", "клікни на ",
-        "кликни кнопку ", "кликни елемент ", "кликни на ",
+        "натисни кнопку ", "натисни на кнопку ", "натисни елемент ", "натисни на елемент ",
+        "натисни на ", "нажми кнопку ", "нажми на кнопку ", "нажми елемент ", "нажми на елемент ",
+        "нажми на ", "клікни кнопку ", "клікни елемент ", "клікни на ", "кликни кнопку ", "кликни елемент ", "кликни на ",
     ):
         if command.startswith(prefix):
             name = command[len(prefix):].strip()
             if name:
                 return {"action": "ui_click", "target": name}
-
     if command in ("яке активне вікно", "що за вікно зараз активне"):
         return {"action": "foreground_window", "target": ""}
-
     return None
 
 
@@ -151,12 +155,7 @@ def _route_volume(command: str):
 
 
 def _number_from_word(word: str):
-    return {
-        "сто": 100, "стo": 100, "двісті": 200, "двісти": 200,
-        "триста": 300, "чотириста": 400, "п'ятсот": 500, "пятсот": 500,
-        "шістсот": 600, "шестсот": 600, "сімсот": 700, "семьсот": 700,
-        "вісімсот": 800, "восемьсот": 800, "дев'ятсот": 900, "девятсот": 900,
-    }.get(word)
+    return {"сто": 100, "стo": 100, "двісті": 200, "двісти": 200, "триста": 300, "чотириста": 400, "п'ятсот": 500, "пятсот": 500, "шістсот": 600, "шестсот": 600, "сімсот": 700, "семьсот": 700, "вісімсот": 800, "восемьсот": 800, "дев'ятсот": 900, "девятсот": 900}.get(word)
 
 
 def _parse_xy(command: str):
@@ -196,11 +195,9 @@ def _route_computer(command: str):
                 text = command[len(prefix):].strip()
                 if text:
                     return {"action": "type_text", "target": text}
-    # "натисни Enter", "натисни Ctrl+L" та подібні клавішні команди.
-    # Якщо після "натисни" стоїть "на", це вже UI click і сюди не потрапляє.
     if command.startswith("натисни ") and not command.startswith("натисни на "):
         key = command[len("натисни "):].strip()
-        if key and key not in {"кнопку", "елемент"}:
+        if key:
             return {"action": "press_key", "target": key}
     return None
 
@@ -242,17 +239,7 @@ def route(command: str, context=None):
     normalized = normalize(command)
     if not normalized:
         return None
-    for handler in (
-        _route_app,
-        _route_site,
-        _route_file,
-        _route_ui,
-        _route_computer,
-        _route_volume,
-        _route_music,
-        _route_search,
-        _route_system,
-    ):
+    for handler in (_route_app, _route_site, _route_browser, _route_file, _route_ui, _route_computer, _route_volume, _route_music, _route_search, _route_system):
         result = handler(normalized)
         if result is not None:
             print(f"[router] LOCAL: {result['action']} -> {result['target']}")
