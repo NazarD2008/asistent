@@ -27,6 +27,7 @@ ALLOWED_ACTIONS = {
     "open_app", "close_app", "play_music", "play_video", "open_video_result",
     "find_content", "open_url", "web_search", "find_file", "open_file",
     "find_folder", "open_path", "delete_file", "screenshot", "analyze_screen",
+    "inspect_ui", "ui_click", "foreground_window",
     "mouse_move", "click", "double_click", "type_text", "press_key", "hotkey",
     "mouse_position", "analyze_memory", "set_volume", "volume_up", "volume_down",
     "mute", "unmute", "shutdown", "restart", "multi_action", "stop", "chat", "unknown",
@@ -53,10 +54,10 @@ SYSTEM_PROMPT = """
 Дозволені action:
 open_app, close_app, play_music, play_video, open_video_result,
 find_content, open_url, web_search, find_file, open_file, find_folder,
-open_path, delete_file, screenshot, analyze_screen, mouse_move, click,
-double_click, type_text, press_key, hotkey, mouse_position, analyze_memory,
-set_volume, volume_up, volume_down, mute, unmute, shutdown, restart,
-multi_action, stop, chat, unknown
+open_path, delete_file, screenshot, analyze_screen, inspect_ui, ui_click,
+foreground_window, mouse_move, click, double_click, type_text, press_key,
+hotkey, mouse_position, analyze_memory, set_volume, volume_up, volume_down,
+mute, unmute, shutdown, restart, multi_action, stop, chat, unknown
 
 ПРОГРАМИ:
 "відкрий Steam" -> open_app / "steam"
@@ -84,6 +85,14 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 "що зараз на екрані" -> analyze_screen / запит користувача
 Відповідь vision має бути КОРОТКОЮ: максимум 3 речення, без списків і без повних шляхів.
 
+WINDOWS UI AUTOMATION:
+UI Automation є ПЕРШИМ способом взаємодії з доступними UI-елементами Windows.
+Не використовуй Vision, якщо потрібний елемент доступний через UI Automation.
+"покажи елементи інтерфейсу" -> inspect_ui / ""
+"яке активне вікно" -> foreground_window / ""
+"натисни кнопку Settings" -> ui_click / "Settings"
+"натисни елемент Зберегти" -> ui_click / "Зберегти"
+
 КОМП'ЮТЕР:
 "покажи координати миші" -> mouse_position / ""
 "перемісти мишку на 500 300" -> mouse_move / "500 300"
@@ -95,20 +104,6 @@ play_video ТІЛЬКИ коли користувач явно каже YouTube/
 MULTI-ACTION:
 Якщо користувач просить кілька послідовних дій в одній фразі, поверни multi_action.
 Для введення в браузер після відкриття браузера використовуй hotkey "ctrl+l" перед type_text.
-Наприклад:
-"відкрий Chrome, напиши привіт" ->
-{"action":"multi_action","target":"","steps":[
-{"action":"open_app","target":"chrome"},
-{"action":"hotkey","target":"ctrl+l"},
-{"action":"type_text","target":"привіт"}
-]}
-
-"відкрий Chrome і потім введи google.com" ->
-{"action":"multi_action","target":"","steps":[
-{"action":"open_app","target":"chrome"},
-{"action":"hotkey","target":"ctrl+l"},
-{"action":"type_text","target":"google.com"}
-]}
 
 Не вигадуй дії, крім очевидних технічних кроків, необхідних для виконання сказаної команди.
 
