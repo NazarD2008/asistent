@@ -1,7 +1,4 @@
-"""Windows UI Automation tools for JARVIS.
-
-UI Automation is the primary desktop layer. Vision is a cautious fallback.
-"""
+"""Windows UI automation and grounded visual interaction for JARVIS."""
 
 from __future__ import annotations
 
@@ -110,11 +107,57 @@ def find_element(name: str):
     return None
 
 
+def _is_text_target(name: str) -> bool:
+    q = name.strip().lower()
+    return q.startswith(".") or any(q.endswith(ext) for ext in (".py", ".txt", ".md", ".json", ".ini", ".yaml", ".yml"))
+
+
+def _is_pycharm() -> bool:
+    if auto is None:
+        return False
+    try:
+        root = auto.GetForegroundControl()
+        title = _control_name(root).lower() if root else ""
+        return "pycharm" in title or "jetbrains" in title or "jarvis -" in title
+    except Exception:
+        return False
+
+
+def _pycharm_open_file(name: str) -> str | None:
+    """Use PyCharm's deterministic file navigation instead of pixel clicking."""
+    if not _is_pycharm() or not _is_text_target(name):
+        return None
+    try:
+        import pyautogui
+
+        print(f"[ui] PyCharm direct navigation: {name}")
+        pyautogui.hotkey("ctrl", "shift", "n")
+        time.sleep(0.35)
+        pyautogui.hotkey("ctrl", "a")
+        pyautogui.write(name, interval=0.015)
+        time.sleep(0.35)
+        pyautogui.press("enter")
+        time.sleep(0.45)
+        return f"PYCHARM_OPENED:{name}"
+    except Exception as exc:
+        print(f"[ui] PyCharm navigation failed: {exc}")
+        return None
+
+
 def click_element(name: str) -> str:
-    """UI Automation first; Vision fallback only when UIA cannot safely act."""
+    """Deterministic UIA -> app-specific route -> OmniParser -> LLM Vision."""
+    # Exact text files in PyCharm should never be delegated to vision.
+    direct = _pycharm_open_file(name)
+    if direct:
+        return direct
+
     control = find_element(name)
     if control is None:
-        print(f"[ui] UI Automation: не знайдено '{name}'. Перемикаюсь на Vision.")
+        print(f"[ui] UI Automation: не знайдено '{name}'.")
+        grounded = _omniparser_click(name)
+        if grounded:
+            return grounded
+        print(f"[ui] OmniParser недоступний/не знайшов '{name}'. Перемикаюсь на Vision.")
         return vision_click(name)
 
     try:
@@ -124,13 +167,15 @@ def click_element(name: str) -> str:
 
     try:
         if not control.IsEnabled:
-            print(f"[ui] UI element disabled: {_control_name(control)}. Перемикаюсь на Vision.")
-            return vision_click(name)
+            print(f"[ui] UI element disabled: {_control_name(control)}. Перемикаюсь далі.")
+            grounded = _omniparser_click(name)
+            return grounded or vision_click(name)
         control.Click()
         return f"UI_CLICKED:{_control_name(control)}"
-    except Exception as e:
-        print(f"[ui] UI Automation click failed: {e}. Перемикаюсь на Vision.")
-        return vision_click(name)
+    except Exception as exc:
+        print(f"[ui] UI Automation click failed: {exc}. Перемикаюсь далі.")
+        grounded = _omniparser_click(name)
+        return grounded or vision_click(name)
 
 
 def _capture_screen():
@@ -139,7 +184,13 @@ def _capture_screen():
     return image, image.size
 
 
-def _encode_image(image, quality: int = 55) -> str:
+def _encode_png(image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _encode_image(image, quality: int = 58) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=quality, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -147,18 +198,14 @@ def _encode_image(image, quality: int = 55) -> str:
 
 def _target_hint(name: str) -> str:
     q = name.strip().lower()
-    if q.endswith((".py", ".txt", ".md", ".json", ".env")) or q.startswith("."):
+    if _is_text_target(q):
         return (
-            "Це назва файлу. Якщо це PyCharm/IDE, шукай саме точний рядок у лівому "
-            "дереві Project, а НЕ у вкладках редактора і НЕ в тексті коду. "
-            "Якщо точного рядка в дереві не видно, поверни found=false."
+            "Це назва текстового файла. Якщо це IDE, шукай точний текст у дереві файлів. "
+            "НЕ обирай вкладку редактора, код або схожий файл. Якщо точний файл не видно, found=false."
         )
     if any(word in q for word in ("шестер", "gear", "settings", "налаштуван")):
-        return (
-            "Це іконка налаштувань. Шукай саме значок шестерні, а не текст, який "
-            "містить подібні слова. Якщо не впевнений, поверни found=false."
-        )
-    return "Знаходь саме названий користувачем елемент; не вибирай схожий або приблизний об'єкт."
+        return "Це іконка шестерні/налаштувань. Вибирай лише справжній значок шестерні."
+    return "Знаходь саме названий елемент, не схожий об'єкт. Якщо є неоднозначність, found=false."
 
 
 def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int]]:
@@ -172,12 +219,11 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
     from openai import OpenAI
 
     prompt = (
-        f"Знайди на screenshot елемент '{name}'. "
-        f"{_target_hint(name)} "
+        f"Знайди на screenshot елемент '{name}'. { _target_hint(name) } "
         "Поверни ТІЛЬКИ JSON без markdown: "
         "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
-        "x,y = центр ТИМ ЧАСОМ НАДАНОГО ЗОБРАЖЕННЯ, у пікселях. "
-        "Якщо точний елемент не видно або є неоднозначність, found=false."
+        "x,y = центр елемента в пікселях поточного screenshot. "
+        "Не роби припущень; при сумніві found=false."
     )
 
     response = OpenAI(api_key=key, base_url=endpoint).responses.create(
@@ -195,13 +241,33 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
     return data, image.size
 
 
-def _is_text_target(name: str) -> bool:
-    q = name.strip().lower()
-    return q.startswith(".") or any(q.endswith(ext) for ext in (".py", ".txt", ".md", ".json", ".ini", ".yaml", ".yml"))
+def _omniparser_click(name: str) -> str | None:
+    """Use local OmniParser structured boxes when a server is configured."""
+    try:
+        from tools import omniparser
+        if not omniparser.is_available():
+            return None
+
+        image, size = _capture_screen()
+        element = omniparser.ground(_encode_png(image), name)
+        if not element:
+            print(f"[omniparser] Точного елемента '{name}' не знайдено.")
+            return None
+
+        x, y = omniparser.center(element, size)
+        print(f"[omniparser] '{name}' -> {x},{y} element={element.get('id')}")
+        import pyautogui
+        pyautogui.moveTo(x, y, duration=0.05)
+        pyautogui.click()
+        time.sleep(0.25)
+        return f"OMNI_CLICKED:{name}:{x},{y}"
+    except Exception as exc:
+        print(f"[omniparser] grounding error: {exc}")
+        return None
 
 
 def vision_click(name: str) -> str:
-    """Vision fallback with strict grounding and no coordinate rescaling."""
+    """Last-resort LLM vision click. Slow but kept as universal fallback."""
     if not name:
         return "VISION_NO_TARGET"
 
@@ -209,12 +275,10 @@ def vision_click(name: str) -> str:
         import pyautogui
 
         started = time.perf_counter()
-        image, screen_size = _capture_screen()
+        image, image_size = _capture_screen()
 
-        # Text/file targets get a single high-detail pass to avoid clicking
-        # a similar filename in the editor/tab area.
-        # Icon-like targets get a fast low pass first; high detail is used
-        # only when the result is uncertain.
+        # Give a single high-detail pass to exact text targets, especially IDE files.
+        # Icons use low first and high only when the model is uncertain.
         if _is_text_target(name):
             data, image_size = _vision_request(name, "high", image)
         else:
@@ -235,8 +299,6 @@ def vision_click(name: str) -> str:
         if not (0 <= x < image_size[0] and 0 <= y < image_size[1]):
             return "Vision повернув некоректні координати."
 
-        # Screenshot coordinates are used directly because the model receives
-        # the same full-resolution image. No resize-to-screen mapping is needed.
         print(
             f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f} "
             f"latency={time.perf_counter() - started:.2f}s"
@@ -246,9 +308,9 @@ def vision_click(name: str) -> str:
         time.sleep(0.25)
         return f"VISION_CLICKED:{name}:{x},{y}"
 
-    except Exception as e:
-        print(f"[ui] Vision fallback error: {e}")
-        return f"VISION_ERROR:{e}"
+    except Exception as exc:
+        print(f"[ui] Vision fallback error: {exc}")
+        return f"VISION_ERROR:{exc}"
 
 
 def get_foreground_name() -> str:
