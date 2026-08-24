@@ -24,25 +24,16 @@ try:
     import win32con
     import win32gui
     import win32process
+    import win32api
 except ImportError:
     win32con = None
     win32gui = None
     win32process = None
+    win32api = None
 
 _SCREENSHOT_DIR = os.path.join(tempfile.gettempdir(), "jarvis")
 
-PROCESS_ALIASES = {
-    "chrome": ("chrome.exe",),
-    "firefox": ("firefox.exe",),
-    "edge": ("msedge.exe",),
-    "discord": ("Discord.exe",),
-    "steam": ("steam.exe",),
-    "telegram": ("Telegram.exe",),
-    "vs code": ("Code.exe",),
-    "code": ("Code.exe",),
-    "explorer": ("explorer.exe",),
-    "notepad": ("notepad.exe",),
-}
+PROCESS_ALIASES = {"chrome": ("chrome.exe",), "firefox": ("firefox.exe",), "edge": ("msedge.exe",), "discord": ("Discord.exe",), "steam": ("steam.exe",), "telegram": ("Telegram.exe",), "vs code": ("Code.exe",), "code": ("Code.exe",), "explorer": ("explorer.exe",), "notepad": ("notepad.exe",)}
 
 
 def _require_pyautogui():
@@ -50,7 +41,7 @@ def _require_pyautogui():
         raise RuntimeError("pyautogui не встановлений. Виконай: pip install pyautogui")
 
 
-def screenshot(path: str | None = None) -> str:
+def screenshot(path=None):
     _require_pyautogui()
     if path:
         output = os.path.abspath(os.path.expanduser(path))
@@ -63,13 +54,13 @@ def screenshot(path: str | None = None) -> str:
     return output
 
 
-def mouse_move(x: int, y: int, duration: float = 0.2) -> str:
+def mouse_move(x, y, duration=0.2):
     _require_pyautogui()
     pyautogui.moveTo(int(x), int(y), duration=float(duration))
     return f"Курсор переміщено на {int(x)}, {int(y)}."
 
 
-def click(x: int | None = None, y: int | None = None, button: str = "left") -> str:
+def click(x=None, y=None, button="left"):
     _require_pyautogui()
     if x is not None and y is not None:
         pyautogui.click(int(x), int(y), button=button)
@@ -78,7 +69,7 @@ def click(x: int | None = None, y: int | None = None, button: str = "left") -> s
     return "Клік виконано."
 
 
-def double_click(x: int | None = None, y: int | None = None) -> str:
+def double_click(x=None, y=None):
     _require_pyautogui()
     if x is not None and y is not None:
         pyautogui.doubleClick(int(x), int(y))
@@ -87,45 +78,62 @@ def double_click(x: int | None = None, y: int | None = None) -> str:
     return "Подвійний клік виконано."
 
 
-def type_text(text: str, interval: float = 0.01) -> str:
-    """Надійне введення Unicode через системний clipboard."""
+def _foreground():
+    if win32gui is None:
+        return None
+    try:
+        return win32gui.GetForegroundWindow()
+    except Exception:
+        return None
+
+
+def _native_paste():
+    if win32api is not None and win32con is not None:
+        try:
+            win32api.keybd_event(win32con.VK_CONTROL, 0, 0, 0)
+            win32api.keybd_event(ord("V"), 0, 0, 0)
+            win32api.keybd_event(ord("V"), 0, win32con.KEYEVENTF_KEYUP, 0)
+            win32api.keybd_event(win32con.VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+            time.sleep(0.25)
+            return True
+        except Exception:
+            pass
     _require_pyautogui()
+    pyautogui.hotkey("ctrl", "v")
+    time.sleep(0.25)
+    return True
+
+
+def type_text(text, interval=0.01):
     if pyperclip is None:
         return "Не вдалося ввести текст: pyperclip не встановлений."
-
     value = str(text)
     if not value:
         return "Порожній текст."
-
     try:
         pyperclip.copy(value)
-        time.sleep(0.2)
-
-        # Повторюємо вставку, бо нове вікно може ще не приймати
-        # першу клавіатурну подію після зміни focus.
-        for attempt in range(3):
-            pyautogui.hotkey("ctrl", "v")
-            time.sleep(0.25)
-
-            # Не перевіряємо clipboard як ознаку успішної вставки:
-            # він природно залишиться рівним value навіть при невдалій вставці.
-            if attempt < 2:
-                continue
-
+        time.sleep(0.25)
+        hwnd = _foreground()
+        if hwnd and win32gui is not None:
+            try:
+                win32gui.SetForegroundWindow(hwnd)
+                time.sleep(0.15)
+            except Exception:
+                pass
+        _native_paste()
         return "Текст введено."
-
     except Exception as e:
-        print(f"[computer] Clipboard input error: {e}")
+        print(f"[computer] Paste error: {e}")
         return "Не вдалося ввести текст."
 
 
-def press(key: str) -> str:
+def press(key):
     _require_pyautogui()
     pyautogui.press(str(key))
     return f"Клавішу {key} натиснуто."
 
 
-def hotkey(*keys: str) -> str:
+def hotkey(*keys):
     _require_pyautogui()
     if not keys:
         return "Не вказані клавіші."
@@ -133,67 +141,50 @@ def hotkey(*keys: str) -> str:
     return f"Комбінацію {' + '.join(str(key) for key in keys)} виконано."
 
 
-def get_mouse_position() -> str:
+def get_mouse_position():
     _require_pyautogui()
     x, y = pyautogui.position()
     return f"Курсор зараз на {x}, {y}."
 
 
-def focus_process(app_name: str) -> bool:
-    """Знаходить головне видиме вікно процесу та переводить його у foreground."""
+def focus_process(app_name):
     if psutil is None or win32gui is None or win32process is None:
         return False
-
-    names = set(PROCESS_ALIASES.get(str(app_name).strip().lower(), ()))
+    names = {n.lower() for n in PROCESS_ALIASES.get(str(app_name).strip().lower(), ())}
     if not names:
         return False
-
     candidates = []
-    wanted = {name.lower() for name in names}
-
     try:
         for proc in psutil.process_iter(["pid", "name"]):
             try:
-                name = (proc.info.get("name") or "").lower()
-                if name in wanted:
+                if (proc.info.get("name") or "").lower() in names:
                     candidates.append(proc.info["pid"])
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
     except Exception:
         return False
-
     if not candidates:
         return False
-
     target_hwnd = None
-
     def enum_handler(hwnd, _):
         nonlocal target_hwnd
-        if target_hwnd is not None:
-            return
-        if not win32gui.IsWindowVisible(hwnd):
+        if target_hwnd is not None or not win32gui.IsWindowVisible(hwnd):
             return
         try:
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
+            if pid in candidates and win32gui.GetWindowText(hwnd).strip():
+                target_hwnd = hwnd
         except Exception:
-            return
-        if pid in candidates and win32gui.GetWindowText(hwnd).strip():
-            target_hwnd = hwnd
-
+            pass
     try:
         win32gui.EnumWindows(enum_handler, None)
-    except Exception:
-        return False
-
-    if target_hwnd is None:
-        return False
-
-    try:
+        if target_hwnd is None:
+            return False
         if win32gui.IsIconic(target_hwnd):
             win32gui.ShowWindow(target_hwnd, win32con.SW_RESTORE)
         win32gui.ShowWindow(target_hwnd, win32con.SW_SHOW)
         win32gui.SetForegroundWindow(target_hwnd)
-        time.sleep(0.2)
+        time.sleep(0.35)
         return True
     except Exception:
         return False
