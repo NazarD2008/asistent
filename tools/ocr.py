@@ -1,9 +1,16 @@
-"""Local OCR grounding for JARVIS."""
+"""Local OCR grounding for JARVIS.
+
+OCR is limited to the visible foreground window so text in JARVIS' own
+console cannot be mistaken for text inside another minimized application.
+"""
 
 from __future__ import annotations
 
+import ctypes
 import os
 import re
+import shutil
+import time
 from typing import Optional
 
 
@@ -15,8 +22,6 @@ TESSERACT_PATHS = (
 
 
 def _tesseract_cmd() -> str | None:
-    import shutil
-
     for path in TESSERACT_PATHS:
         if path and os.path.isfile(path):
             return path
@@ -29,8 +34,46 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _tesseract_available() -> bool:
-    return bool(_tesseract_cmd())
+def _foreground_rect():
+    """Return the visible foreground window rectangle, or None if minimized."""
+    hwnd = ctypes.windll.user32.GetForegroundWindow()
+    if not hwnd:
+        return None
+    if ctypes.windll.user32.IsIconic(hwnd):
+        return None
+
+    class RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long),
+            ("top", ctypes.c_long),
+            ("right", ctypes.c_long),
+            ("bottom", ctypes.c_long),
+        ]
+
+    rect = RECT()
+    if not ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+        return None
+    if rect.right <= rect.left or rect.bottom <= rect.top:
+        return None
+    return rect.left, rect.top, rect.right, rect.bottom
+
+
+def _rows_from_ocr(image):
+    import pytesseract
+    from pytesseract import Output
+
+    cmd = _tesseract_cmd()
+    if not cmd:
+        print("[ocr] Tesseract не знайдений.")
+        return None
+    pytesseract.pytesseract.tesseract_cmd = cmd
+
+    return pytesseract.image_to_data(
+        image,
+        lang="ukr+eng",
+        output_type=Output.DICT,
+        config="--oem 3 --psm 11",
+    )
 
 
 def find_text(target: str):
@@ -45,17 +88,18 @@ def find_text(target: str):
 
     try:
         import pyautogui
-        import pytesseract
-        from pytesseract import Output
 
-        pytesseract.pytesseract.tesseract_cmd = cmd
-        image = pyautogui.screenshot()
-        data = pytesseract.image_to_data(
-            image,
-            lang="ukr+eng",
-            output_type=Output.DICT,
-            config="--psm 11",
-        )
+        rect = _foreground_rect()
+        if not rect:
+            print("[ocr] Немає видимого foreground-вікна. OCR пропущено.")
+            return None
+
+        left, top, right, bottom = rect
+        screenshot = pyautogui.screenshot()
+        image = screenshot.crop((left, top, right, bottom))
+        data = _rows_from_ocr(image)
+        if not data:
+            return None
 
         wanted = _normalize(target)
         rows = []
@@ -75,6 +119,7 @@ def find_text(target: str):
                 block_num = int(data.get("block_num", [0])[i])
             except Exception:
                 continue
+
             rows.append({
                 "text": raw,
                 "norm": _normalize(raw),
@@ -88,19 +133,17 @@ def find_text(target: str):
 
         best = None
 
-        # First try exact individual token match.
         for item in rows:
             if item["norm"] == wanted:
                 candidate = {
                     "text": item["text"],
-                    "x": item["x"] + item["w"] // 2,
-                    "y": item["y"] + item["h"] // 2,
+                    "x": item["x"] + item["w"] // 2 + left,
+                    "y": item["y"] + item["h"] // 2 + top,
                     "confidence": max(0.75, item["confidence"]),
                 }
                 if best is None or candidate["confidence"] > best["confidence"]:
                     best = candidate
 
-        # Multi-word target: combine neighboring OCR boxes on the same line.
         if best is None and " " in wanted:
             grouped = {}
             for item in rows:
@@ -110,8 +153,7 @@ def find_text(target: str):
                 group.sort(key=lambda x: (x["y"], x["x"]))
                 for start in range(len(group)):
                     combined = []
-                    min_x = min_y = None
-                    max_x = max_y = None
+                    min_x = min_y = max_x = max_y = None
                     confs = []
 
                     for end in range(start, min(len(group), start + 8)):
@@ -134,24 +176,26 @@ def find_text(target: str):
                         if text == wanted:
                             candidate = {
                                 "text": " ".join(x["text"] for x in group[start:end + 1]),
-                                "x": (min_x + max_x) // 2,
-                                "y": (min_y + max_y) // 2,
+                                "x": (min_x + max_x) // 2 + left,
+                                "y": (min_y + max_y) // 2 + top,
                                 "confidence": max(0.75, min(confs) if confs else 0.0),
                             }
                             if best is None or candidate["confidence"] > best["confidence"]:
                                 best = candidate
                             break
-                        if len(text) > len(wanted) and not text.startswith(wanted + " "):
+                        if len(text) > len(wanted):
                             break
 
         if best:
             print(
                 f"[ocr] '{target}' -> {best['x']},{best['y']} "
-                f"confidence={best['confidence']:.2f} cmd={cmd} lang=ukr+eng"
+                f"confidence={best['confidence']:.2f} "
+                f"window={left},{top},{right},{bottom} "
+                f"cmd={cmd} lang=ukr+eng"
             )
             return best
 
-        print(f"[ocr] Текст '{target}' не знайдено.")
+        print(f"[ocr] Текст '{target}' не знайдено у foreground-вікні.")
 
     except Exception as exc:
         print(f"[ocr] error: {exc}")
@@ -166,15 +210,14 @@ def click_text(target: str) -> Optional[str]:
 
     try:
         import pyautogui
-        import time
 
         before = pyautogui.screenshot().convert("RGB")
-        pyautogui.moveTo(result["x"], result["y"], duration=0.05)
+        x, y = result["x"], result["y"]
+        pyautogui.moveTo(x, y, duration=0.05)
         pyautogui.click()
         time.sleep(0.35)
         after = pyautogui.screenshot().convert("RGB")
 
-        x, y = result["x"], result["y"]
         changed = total = 0
         for yy in range(max(0, y - 32), min(before.height, y + 33), 8):
             for xx in range(max(0, x - 32), min(before.width, x + 33), 8):
