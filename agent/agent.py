@@ -146,14 +146,11 @@ class JarvisAgent:
                 continue
 
             print(f"[agent] Plan step {index}: {action} -> {target}")
-
             result = str(self.execute(action, target, "") or "").strip()
             results.append(result)
 
             if action == "open_app":
                 active_app = target
-                # Windows запускає GUI асинхронно. Даємо йому час,
-                # потім примусово переводимо потрібне вікно у foreground.
                 time.sleep(0.8)
                 try:
                     from tools import computer
@@ -238,6 +235,30 @@ class JarvisAgent:
             import urllib.parse
             search_url = "https://www.google.com/search?q=" + urllib.parse.quote(target)
             return browser.open_url(search_url)
+
+        if action == "inspect_ui":
+            try:
+                from tools import ui
+                return ui.inspect_ui()
+            except Exception as e:
+                print(f"[agent] UI Automation error: {e}")
+                return "Не вдалося прочитати елементи активного вікна."
+
+        if action == "ui_click":
+            try:
+                from tools import ui
+                return ui.click_element(target)
+            except Exception as e:
+                print(f"[agent] UI click error: {e}")
+                return "Не вдалося натиснути UI-елемент."
+
+        if action == "foreground_window":
+            try:
+                from tools import ui
+                return ui.get_foreground_name()
+            except Exception as e:
+                print(f"[agent] UI foreground error: {e}")
+                return "Не вдалося визначити активне вікно."
 
         if action == "screenshot":
             try:
