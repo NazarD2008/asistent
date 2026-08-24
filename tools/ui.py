@@ -1,7 +1,6 @@
 """Windows UI Automation tools for JARVIS.
 
-Primary desktop perception layer before Vision fallback.
-Uses Windows UI Automation through `uiautomation`; Vision is fallback.
+UI Automation is the primary desktop layer. Vision is a cautious fallback.
 """
 
 from __future__ import annotations
@@ -22,9 +21,7 @@ except ImportError:
 
 def _require():
     if auto is None:
-        raise RuntimeError(
-            "uiautomation не встановлений. Виконай: pip install uiautomation"
-        )
+        raise RuntimeError("uiautomation не встановлений. Виконай: pip install uiautomation")
 
 
 def _control_name(control) -> str:
@@ -45,11 +42,12 @@ def _is_useful(control) -> bool:
     return bool(_control_name(control) or _control_type(control))
 
 
-def inspect_ui(max_depth: int = 3, max_items: int = 80) -> str:
+def inspect_ui(max_depth: int = 6, max_items: int = 140) -> str:
     _require()
     root = auto.GetForegroundControl()
     if root is None:
         return "Не вдалося отримати foreground-вікно."
+
     lines = []
     seen = 0
 
@@ -88,9 +86,10 @@ def find_element(name: str):
     root = auto.GetForegroundControl()
     if root is None:
         return None
+
     try:
-        exact = root.Control(searchDepth=10, Name=query)
-        if exact.Exists(0.5):
+        exact = root.Control(searchDepth=15, Name=query)
+        if exact.Exists(0.7):
             return exact
     except Exception:
         pass
@@ -98,11 +97,11 @@ def find_element(name: str):
     query_lower = query.lower()
     queue = [root]
     visited = 0
-    while queue and visited < 5000:
+    while queue and visited < 10000:
         control = queue.pop(0)
         visited += 1
         name_value = _control_name(control)
-        if name_value and query_lower in name_value.lower():
+        if name_value and query_lower == name_value.lower():
             return control
         try:
             queue.extend(control.GetChildren())
@@ -112,7 +111,7 @@ def find_element(name: str):
 
 
 def click_element(name: str) -> str:
-    """UI Automation first; Vision fallback only when UIA cannot find/click the element."""
+    """UI Automation first; Vision fallback only when UIA cannot safely act."""
     control = find_element(name)
     if control is None:
         print(f"[ui] UI Automation: не знайдено '{name}'. Перемикаюсь на Vision.")
@@ -134,61 +133,75 @@ def click_element(name: str) -> str:
         return vision_click(name)
 
 
-def _screenshot_data(max_width: int = 1280):
+def _capture_screen():
     import pyautogui
-
     image = pyautogui.screenshot().convert("RGB")
-    original_size = image.size
-    if image.width > max_width:
-        ratio = max_width / image.width
-        image = image.resize((max_width, int(image.height * ratio)))
-    shown_size = image.size
+    return image, image.size
+
+
+def _encode_image(image, quality: int = 55) -> str:
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=62, optimize=True)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8"), original_size, shown_size
+    image.save(buffer, format="JPEG", quality=quality, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def _call_vision(name: str, detail: str):
+def _target_hint(name: str) -> str:
+    q = name.strip().lower()
+    if q.endswith((".py", ".txt", ".md", ".json", ".env")) or q.startswith("."):
+        return (
+            "Це назва файлу. Якщо це PyCharm/IDE, шукай саме точний рядок у лівому "
+            "дереві Project, а НЕ у вкладках редактора і НЕ в тексті коду. "
+            "Якщо точного рядка в дереві не видно, поверни found=false."
+        )
+    if any(word in q for word in ("шестер", "gear", "settings", "налаштуван")):
+        return (
+            "Це іконка налаштувань. Шукай саме значок шестерні, а не текст, який "
+            "містить подібні слова. Якщо не впевнений, поверни found=false."
+        )
+    return "Знаходь саме названий користувачем елемент; не вибирай схожий або приблизний об'єкт."
+
+
+def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int]]:
     load_dotenv()
     key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5-mini")
     if not key or not endpoint:
-        return None
+        raise RuntimeError("VISION_UNAVAILABLE")
 
     from openai import OpenAI
 
-    image_b64, original_size, shown_size = _screenshot_data()
+    prompt = (
+        f"Знайди на screenshot елемент '{name}'. "
+        f"{_target_hint(name)} "
+        "Поверни ТІЛЬКИ JSON без markdown: "
+        "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
+        "x,y = центр ТИМ ЧАСОМ НАДАНОГО ЗОБРАЖЕННЯ, у пікселях. "
+        "Якщо точний елемент не видно або є неоднозначність, found=false."
+    )
+
     response = OpenAI(api_key=key, base_url=endpoint).responses.create(
         model=model,
         input=[{
             "role": "user",
             "content": [
-                {
-                    "type": "input_text",
-                    "text": (
-                        f"Find the UI element '{name}' on this Windows screenshot. "
-                        "Return ONLY JSON: "
-                        "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
-                        "x,y are coordinates relative to the image you received. "
-                        "Return the CENTER of the element. If absent, found=false."
-                    ),
-                },
-                {
-                    "type": "input_image",
-                    "image_url": f"data:image/jpeg;base64,{image_b64}",
-                    "detail": detail,
-                },
+                {"type": "input_text", "text": prompt},
+                {"type": "input_image", "image_url": f"data:image/jpeg;base64,{_encode_image(image)}", "detail": detail},
             ],
         }],
     )
     raw = response.output_text.strip()
     data = json.loads(raw.replace("```json", "").replace("```", "").strip())
-    return data, original_size, shown_size
+    return data, image.size
+
+
+def _is_text_target(name: str) -> bool:
+    q = name.strip().lower()
+    return q.startswith(".") or any(q.endswith(ext) for ext in (".py", ".txt", ".md", ".json", ".ini", ".yaml", ".yml"))
 
 
 def vision_click(name: str) -> str:
-    """Fast low-detail Vision first; high-detail retry only when needed."""
+    """Vision fallback with strict grounding and no coordinate rescaling."""
     if not name:
         return "VISION_NO_TARGET"
 
@@ -196,47 +209,42 @@ def vision_click(name: str) -> str:
         import pyautogui
 
         started = time.perf_counter()
-        used_detail = "low"
-        result = _call_vision(name, "low")
-        if result is None:
-            return "VISION_UNAVAILABLE"
-        data, original_size, shown_size = result
-        confidence = float(data.get("confidence", 0) or 0)
+        image, screen_size = _capture_screen()
 
-        # If low-detail is uncertain, retry once with high detail.
-        if not data.get("found") or confidence < 0.60:
-            used_detail = "high"
-            result = _call_vision(name, "high")
-            if result is None:
-                return "VISION_UNAVAILABLE"
-            data, original_size, shown_size = result
+        # Text/file targets get a single high-detail pass to avoid clicking
+        # a similar filename in the editor/tab area.
+        # Icon-like targets get a fast low pass first; high detail is used
+        # only when the result is uncertain.
+        if _is_text_target(name):
+            data, image_size = _vision_request(name, "high", image)
+        else:
+            data, image_size = _vision_request(name, "low", image)
             confidence = float(data.get("confidence", 0) or 0)
+            if (not data.get("found")) or confidence < 0.80:
+                data, image_size = _vision_request(name, "high", image)
 
         if not data.get("found"):
             return f"Елемент '{name}' не знайдено через Vision."
-        if confidence < 0.60:
-            return f"Vision знайшов '{name}', але впевненість занадто низька ({confidence:.2f})."
+
+        confidence = float(data.get("confidence", 0) or 0)
+        if confidence < 0.75:
+            return f"Vision знайшов '{name}', але впевненість недостатня ({confidence:.2f})."
 
         x = int(data.get("x", -1))
         y = int(data.get("y", -1))
-        if not (0 <= x < shown_size[0] and 0 <= y < shown_size[1]):
+        if not (0 <= x < image_size[0] and 0 <= y < image_size[1]):
             return "Vision повернув некоректні координати."
 
-        # Map coordinates from the resized image back to the real screen.
-        sx = original_size[0] / shown_size[0]
-        sy = original_size[1] / shown_size[1]
-        screen_x = int(round(x * sx))
-        screen_y = int(round(y * sy))
-
-        latency = time.perf_counter() - started
+        # Screenshot coordinates are used directly because the model receives
+        # the same full-resolution image. No resize-to-screen mapping is needed.
         print(
-            f"[ui] Vision: '{name}' -> image={x},{y} screen={screen_x},{screen_y} "
-            f"confidence={confidence:.2f} detail={used_detail} latency={latency:.2f}s"
+            f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f} "
+            f"latency={time.perf_counter() - started:.2f}s"
         )
-
-        pyautogui.click(screen_x, screen_y)
+        pyautogui.moveTo(x, y, duration=0.05)
+        pyautogui.click()
         time.sleep(0.25)
-        return f"VISION_CLICKED:{name}:{screen_x},{screen_y}"
+        return f"VISION_CLICKED:{name}:{x},{y}"
 
     except Exception as e:
         print(f"[ui] Vision fallback error: {e}")
