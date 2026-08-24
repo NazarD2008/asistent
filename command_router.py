@@ -78,6 +78,7 @@ def _route_site(command: str):
 
 
 def _route_browser(command: str):
+    """Route browser-only commands before desktop UI and generic web search."""
     if _is_compound(command):
         return None
     youtube_markers = ("на ютубі", "на ютуб", "в ютубі", "в youtube", "на youtube", "ютуб відео", "youtube відео")
@@ -94,6 +95,18 @@ def _route_browser(command: str):
         target = command[len("відкрий сторінку "):].strip()
         if target:
             return {"action": "browser_open", "target": target}
+    for prefix in ("натисни в браузері ", "натисни у браузері ", "нажми в браузері ", "нажми у браузері ", "клікни в браузері ", "клікни у браузері "):
+        if command.startswith(prefix):
+            target = command[len(prefix):].strip()
+            if target:
+                return {"action": "browser_click_text", "target": target}
+    for prefix in ("введи в браузері ", "введи у браузері ", "напиши в браузері ", "напиши у браузері "):
+        if command.startswith(prefix):
+            target = command[len(prefix):].strip()
+            if target:
+                return {"action": "browser_type", "target": target}
+    if command in ("що відкрито в браузері", "яка сторінка відкрито", "яка сторінка в браузері"):
+        return {"action": "browser_current", "target": ""}
     return None
 
 
