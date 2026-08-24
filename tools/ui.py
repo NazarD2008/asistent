@@ -10,6 +10,7 @@ import base64
 import io
 import json
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -133,74 +134,110 @@ def click_element(name: str) -> str:
         return vision_click(name)
 
 
-def _screenshot_data():
+def _screenshot_data(max_width: int = 1280):
     import pyautogui
+
     image = pyautogui.screenshot().convert("RGB")
     original_size = image.size
-    if image.width > 1600:
-        ratio = 1600 / image.width
-        image = image.resize((1600, int(image.height * ratio)))
+    if image.width > max_width:
+        ratio = max_width / image.width
+        image = image.resize((max_width, int(image.height * ratio)))
+    shown_size = image.size
     buffer = io.BytesIO()
-    image.save(buffer, format="JPEG", quality=72, optimize=True)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8"), original_size
+    image.save(buffer, format="JPEG", quality=62, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("utf-8"), original_size, shown_size
 
 
-def vision_click(name: str) -> str:
-    """Vision fallback when UI Automation cannot find the requested element."""
+def _call_vision(name: str, detail: str):
     load_dotenv()
     key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     model = os.getenv("AZURE_OPENAI_MODEL", "gpt-5-mini")
     if not key or not endpoint:
-        return "VISION_UNAVAILABLE"
+        return None
+
+    from openai import OpenAI
+
+    image_b64, original_size, shown_size = _screenshot_data()
+    response = OpenAI(api_key=key, base_url=endpoint).responses.create(
+        model=model,
+        input=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": (
+                        f"Find the UI element '{name}' on this Windows screenshot. "
+                        "Return ONLY JSON: "
+                        "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
+                        "x,y are coordinates relative to the image you received. "
+                        "Return the CENTER of the element. If absent, found=false."
+                    ),
+                },
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/jpeg;base64,{image_b64}",
+                    "detail": detail,
+                },
+            ],
+        }],
+    )
+    raw = response.output_text.strip()
+    data = json.loads(raw.replace("```json", "").replace("```", "").strip())
+    return data, original_size, shown_size
+
+
+def vision_click(name: str) -> str:
+    """Fast low-detail Vision first; high-detail retry only when needed."""
+    if not name:
+        return "VISION_NO_TARGET"
 
     try:
-        from openai import OpenAI
         import pyautogui
 
-        image_b64, original_size = _screenshot_data()
-        response = OpenAI(api_key=key, base_url=endpoint).responses.create(
-            model=model,
-            input=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": (
-                            f"Знайди на екрані елемент '{name}'. "
-                            "Поверни ТІЛЬКИ JSON: "
-                            "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
-                            "x,y повинні бути координатами центра елемента в оригінальному screenshot. "
-                            "Якщо елемента немає, found=false."
-                        ),
-                    },
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:image/jpeg;base64,{image_b64}",
-                        "detail": "high",
-                    },
-                ],
-            }],
-        )
-        raw = response.output_text.strip()
-        data = json.loads(raw.replace("```json", "").replace("```", "").strip())
-        if not data.get("found"):
-            return f"Елемент '{name}' не знайдено навіть через Vision."
+        started = time.perf_counter()
+        used_detail = "low"
+        result = _call_vision(name, "low")
+        if result is None:
+            return "VISION_UNAVAILABLE"
+        data, original_size, shown_size = result
+        confidence = float(data.get("confidence", 0) or 0)
 
-        confidence = float(data.get("confidence", 0))
-        # 0.60 is the minimum accepted confidence. We rely on found=true,
-        # valid coordinates, and keep the score visible in the log.
+        # If low-detail is uncertain, retry once with high detail.
+        if not data.get("found") or confidence < 0.60:
+            used_detail = "high"
+            result = _call_vision(name, "high")
+            if result is None:
+                return "VISION_UNAVAILABLE"
+            data, original_size, shown_size = result
+            confidence = float(data.get("confidence", 0) or 0)
+
+        if not data.get("found"):
+            return f"Елемент '{name}' не знайдено через Vision."
         if confidence < 0.60:
             return f"Vision знайшов '{name}', але впевненість занадто низька ({confidence:.2f})."
 
-        x = int(data["x"])
-        y = int(data["y"])
-        if not (0 <= x < original_size[0] and 0 <= y < original_size[1]):
+        x = int(data.get("x", -1))
+        y = int(data.get("y", -1))
+        if not (0 <= x < shown_size[0] and 0 <= y < shown_size[1]):
             return "Vision повернув некоректні координати."
 
-        print(f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f}")
-        pyautogui.click(x, y)
-        return f"VISION_CLICKED:{name}:{x},{y}"
+        # Map coordinates from the resized image back to the real screen.
+        sx = original_size[0] / shown_size[0]
+        sy = original_size[1] / shown_size[1]
+        screen_x = int(round(x * sx))
+        screen_y = int(round(y * sy))
+
+        latency = time.perf_counter() - started
+        print(
+            f"[ui] Vision: '{name}' -> image={x},{y} screen={screen_x},{screen_y} "
+            f"confidence={confidence:.2f} detail={used_detail} latency={latency:.2f}s"
+        )
+
+        pyautogui.click(screen_x, screen_y)
+        time.sleep(0.25)
+        return f"VISION_CLICKED:{name}:{screen_x},{screen_y}"
+
     except Exception as e:
         print(f"[ui] Vision fallback error: {e}")
         return f"VISION_ERROR:{e}"
