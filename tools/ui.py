@@ -124,7 +124,8 @@ def click_element(name: str) -> str:
 
     try:
         if not control.IsEnabled:
-            return f"UI_DISABLED:{_control_name(control)}"
+            print(f"[ui] UI element disabled: {_control_name(control)}. Перемикаюсь на Vision.")
+            return vision_click(name)
         control.Click()
         return f"UI_CLICKED:{_control_name(control)}"
     except Exception as e:
@@ -185,8 +186,11 @@ def vision_click(name: str) -> str:
         data = json.loads(raw.replace("```json", "").replace("```", "").strip())
         if not data.get("found"):
             return f"Елемент '{name}' не знайдено навіть через Vision."
+
         confidence = float(data.get("confidence", 0))
-        if confidence < 0.70:
+        # 0.60 is the minimum accepted confidence. We rely on found=true,
+        # valid coordinates, and keep the score visible in the log.
+        if confidence < 0.60:
             return f"Vision знайшов '{name}', але впевненість занадто низька ({confidence:.2f})."
 
         x = int(data["x"])
@@ -194,6 +198,7 @@ def vision_click(name: str) -> str:
         if not (0 <= x < original_size[0] and 0 <= y < original_size[1]):
             return "Vision повернув некоректні координати."
 
+        print(f"[ui] Vision: '{name}' -> {x},{y} confidence={confidence:.2f}")
         pyautogui.click(x, y)
         return f"VISION_CLICKED:{name}:{x},{y}"
     except Exception as e:
