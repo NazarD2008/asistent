@@ -124,7 +124,7 @@ def _is_pycharm() -> bool:
 
 
 def _pycharm_open_file(name: str) -> str | None:
-    """Use PyCharm's deterministic file navigation instead of pixel clicking."""
+    """Deterministically open an exact IDE file instead of guessing pixels."""
     if not _is_pycharm() or not _is_text_target(name):
         return None
     try:
@@ -134,7 +134,15 @@ def _pycharm_open_file(name: str) -> str | None:
         pyautogui.hotkey("ctrl", "shift", "n")
         time.sleep(0.35)
         pyautogui.hotkey("ctrl", "a")
-        pyautogui.write(name, interval=0.015)
+        # pyperclip handles Unicode names such as .env reliably.
+        try:
+            import pyperclip
+            previous = pyperclip.paste()
+            pyperclip.copy(name)
+            pyautogui.hotkey("ctrl", "v")
+            pyperclip.copy(previous)
+        except Exception:
+            pyautogui.write(name, interval=0.015)
         time.sleep(0.35)
         pyautogui.press("enter")
         time.sleep(0.45)
@@ -146,7 +154,6 @@ def _pycharm_open_file(name: str) -> str | None:
 
 def click_element(name: str) -> str:
     """Deterministic UIA -> app-specific route -> OmniParser -> LLM Vision."""
-    # Exact text files in PyCharm should never be delegated to vision.
     direct = _pycharm_open_file(name)
     if direct:
         return direct
@@ -219,7 +226,7 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
     from openai import OpenAI
 
     prompt = (
-        f"Знайди на screenshot елемент '{name}'. { _target_hint(name) } "
+        f"Знайди на screenshot елемент '{name}'. {_target_hint(name)} "
         "Поверни ТІЛЬКИ JSON без markdown: "
         "{\"found\":true/false,\"x\":number,\"y\":number,\"confidence\":number}. "
         "x,y = центр елемента в пікселях поточного screenshot. "
@@ -242,7 +249,7 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
 
 
 def _omniparser_click(name: str) -> str | None:
-    """Use local OmniParser structured boxes when a server is configured."""
+    """Use local OmniParser structured boxes when configured."""
     try:
         from tools import omniparser
         if not omniparser.is_available():
@@ -277,8 +284,6 @@ def vision_click(name: str) -> str:
         started = time.perf_counter()
         image, image_size = _capture_screen()
 
-        # Give a single high-detail pass to exact text targets, especially IDE files.
-        # Icons use low first and high only when the model is uncertain.
         if _is_text_target(name):
             data, image_size = _vision_request(name, "high", image)
         else:
