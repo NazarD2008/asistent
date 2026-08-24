@@ -41,7 +41,7 @@ def _starts_with(command: str, words) -> bool:
 
 def _is_compound(command: str) -> bool:
     markers = (
-        ",", " потім ", " і ", " напиши ", " введи ",
+        ",", " потім ", " і ", " та напиши ", " і напиши ", " напиши ", " введи ",
         " натисни ", " клікни ", " кликни ", " двічі ",
     )
     return any(marker in command for marker in markers)
@@ -167,6 +167,31 @@ def _route_computer(command: str):
     return None
 
 
+def _route_ui(command: str):
+    if _is_compound(command):
+        return None
+
+    if any(phrase in command for phrase in (
+        "покажи елементи інтерфейсу",
+        "покажи елементи інтерфейса",
+        "покажи ui",
+        "проінспектуй вікно",
+        "інспектуй вікно",
+    )):
+        return {"action": "inspect_ui", "target": ""}
+
+    for prefix in ("натисни елемент ", "натисни кнопку ", "клікни елемент "):
+        if command.startswith(prefix):
+            name = command[len(prefix):].strip()
+            if name:
+                return {"action": "ui_click", "target": name}
+
+    if command in ("яке активне вікно", "що за вікно зараз активне"):
+        return {"action": "foreground_window", "target": ""}
+
+    return None
+
+
 def _route_music(command: str):
     if _is_compound(command):
         return None
@@ -204,7 +229,7 @@ def route(command: str, context=None):
     normalized = normalize(command)
     if not normalized:
         return None
-    for handler in (_route_app, _route_site, _route_file, _route_computer, _route_volume, _route_music, _route_search, _route_system):
+    for handler in (_route_app, _route_site, _route_file, _route_computer, _route_ui, _route_volume, _route_music, _route_search, _route_system):
         result = handler(normalized)
         if result is not None:
             print(f"[router] LOCAL: {result['action']} -> {result['target']}")
