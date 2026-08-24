@@ -14,6 +14,8 @@ comtypes>=1.4.0
 pyautogui==0.9.54
 pyperclip>=1.9.0
 Send2Trash>=1.8.3
+pytesseract>=0.3.13
+playwright>=1.55.0
 certifi>=2024.0.0
 charset-normalizer>=3.0.0
 idna>=3.0
