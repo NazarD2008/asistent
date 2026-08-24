@@ -233,7 +233,17 @@ def route(command: str, context=None):
     normalized = normalize(command)
     if not normalized:
         return None
-    for handler in (_route_app, _route_site, _route_file, _route_ui, _route_computer, _route_volume, _route_music, _route_search, _route_system):
+    for handler in (
+        _route_app,
+        _route_site,
+        _route_file,
+        _route_ui,
+        _route_computer,
+        _route_volume,
+        _route_music,
+        _route_search,
+        _route_system,
+    ):
         result = handler(normalized)
         if result is not None:
             print(f"[router] LOCAL: {result['action']} -> {result['target']}")
