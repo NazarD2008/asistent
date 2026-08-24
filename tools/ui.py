@@ -112,7 +112,28 @@ def _is_text_target(name: str) -> bool:
     return q.startswith(".") or any(q.endswith(ext) for ext in (".py", ".txt", ".md", ".json", ".ini", ".yaml", ".yml"))
 
 
+def _foreground_process_name() -> str:
+    """Return executable name of the foreground window without requiring a GUI API."""
+    try:
+        import ctypes
+        import psutil
+
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        process = psutil.Process(pid.value)
+        return process.name().lower()
+    except Exception:
+        return ""
+
+
 def _is_pycharm() -> bool:
+    process_name = _foreground_process_name()
+    if process_name in {"pycharm64.exe", "pycharm.exe"}:
+        return True
+
     if auto is None:
         return False
     try:
@@ -124,7 +145,7 @@ def _is_pycharm() -> bool:
 
 
 def _pycharm_open_file(name: str) -> str | None:
-    """Deterministically open an exact IDE file instead of guessing pixels."""
+    """Use PyCharm's deterministic file navigation instead of pixel clicking."""
     if not _is_pycharm() or not _is_text_target(name):
         return None
     try:
@@ -132,20 +153,12 @@ def _pycharm_open_file(name: str) -> str | None:
 
         print(f"[ui] PyCharm direct navigation: {name}")
         pyautogui.hotkey("ctrl", "shift", "n")
-        time.sleep(0.35)
+        time.sleep(0.5)
         pyautogui.hotkey("ctrl", "a")
-        # pyperclip handles Unicode names such as .env reliably.
-        try:
-            import pyperclip
-            previous = pyperclip.paste()
-            pyperclip.copy(name)
-            pyautogui.hotkey("ctrl", "v")
-            pyperclip.copy(previous)
-        except Exception:
-            pyautogui.write(name, interval=0.015)
-        time.sleep(0.35)
+        pyautogui.write(name, interval=0.015)
+        time.sleep(0.5)
         pyautogui.press("enter")
-        time.sleep(0.45)
+        time.sleep(0.6)
         return f"PYCHARM_OPENED:{name}"
     except Exception as exc:
         print(f"[ui] PyCharm navigation failed: {exc}")
@@ -249,7 +262,6 @@ def _vision_request(name: str, detail: str, image) -> tuple[dict, tuple[int, int
 
 
 def _omniparser_click(name: str) -> str | None:
-    """Use local OmniParser structured boxes when configured."""
     try:
         from tools import omniparser
         if not omniparser.is_available():
