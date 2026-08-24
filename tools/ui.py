@@ -113,7 +113,6 @@ def _is_text_target(name: str) -> bool:
 
 
 def _foreground_process_name() -> str:
-    """Return executable name of the foreground window without requiring a GUI API."""
     try:
         import ctypes
         import psutil
@@ -145,20 +144,41 @@ def _is_pycharm() -> bool:
 
 
 def _pycharm_open_file(name: str) -> str | None:
-    """Use PyCharm's deterministic file navigation instead of pixel clicking."""
+    """Open an exact project file in PyCharm without pixel clicking or keyboard leakage."""
     if not _is_pycharm() or not _is_text_target(name):
         return None
+
     try:
         import pyautogui
+        import pyperclip
 
         print(f"[ui] PyCharm direct navigation: {name}")
+
+        # Ctrl+Shift+N = Navigate to File in PyCharm.
         pyautogui.hotkey("ctrl", "shift", "n")
-        time.sleep(0.5)
+        time.sleep(0.7)
+
+        # Clipboard avoids layout-dependent typing and prevents punctuation such
+        # as '.' from leaking into the JARVIS console on the wrong focus target.
+        previous_clipboard = None
+        try:
+            previous_clipboard = pyperclip.paste()
+        except Exception:
+            pass
+
+        pyperclip.copy(name)
         pyautogui.hotkey("ctrl", "a")
-        pyautogui.write(name, interval=0.015)
-        time.sleep(0.5)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.35)
         pyautogui.press("enter")
-        time.sleep(0.6)
+        time.sleep(0.8)
+
+        if previous_clipboard is not None:
+            try:
+                pyperclip.copy(previous_clipboard)
+            except Exception:
+                pass
+
         return f"PYCHARM_OPENED:{name}"
     except Exception as exc:
         print(f"[ui] PyCharm navigation failed: {exc}")
