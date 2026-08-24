@@ -8,6 +8,12 @@ def normalize(text: str) -> str:
         return ""
     text = str(text).lower().strip()
     text = text.replace("ё", "е").replace("’", "'").replace("`", "'")
+    # Azure Speech sometimes turns imperative "натисни" into forms like
+    # "натисне" / "наш ми". Normalize only common command-context variants.
+    text = re.sub(r"\bнатисне\b", "натисни", text)
+    text = re.sub(r"\bнатисна\b", "натисни", text)
+    text = re.sub(r"\bнаш ми\b", "натисни", text)
+    text = re.sub(r"\bнажми\b", "нажми", text)
     return re.sub(r"\s+", " ", text)
 
 
@@ -95,7 +101,8 @@ def _route_browser(command: str):
         target = command[len("відкрий сторінку "):].strip()
         if target:
             return {"action": "browser_open", "target": target}
-    for prefix in ("натисни в браузері ", "натисни у браузері ", "нажми в браузері ", "нажми у браузері ", "клікни в браузері ", "клікни у браузері "):
+    for prefix in (
+        "натисни в браузері ", "натисни у браузері ", "нажми в браузері ", "нажми у браузері ", "клікни в браузері ", "клікни у браузері "):
         if command.startswith(prefix):
             target = command[len(prefix):].strip()
             if target:
