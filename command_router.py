@@ -42,7 +42,7 @@ def _starts_with(command: str, words) -> bool:
 def _is_compound(command: str) -> bool:
     markers = (
         ",", " потім ", " і ", " та напиши ", " і напиши ", " напиши ", " введи ",
-        " натисни ", " клікни ", " кликни ", " двічі ",
+        " натисни ", " нажми ", " клікни ", " кликни ", " двічі ",
     )
     return any(marker in command for marker in markers)
 
@@ -112,10 +112,15 @@ def _route_ui(command: str):
     )):
         return {"action": "inspect_ui", "target": ""}
 
+    # Будь-яке "натисни/нажми на ..." означає UI-елемент,
+    # а не клавішу. Ключі без "на" обробляються окремо.
     for prefix in (
         "натисни кнопку ", "натисни на кнопку ",
         "натисни елемент ", "натисни на елемент ",
-        "клікни кнопку ", "клікни елемент ",
+        "натисни на ", "нажми кнопку ", "нажми на кнопку ",
+        "нажми елемент ", "нажми на елемент ", "нажми на ",
+        "клікни кнопку ", "клікни елемент ", "клікни на ",
+        "кликни кнопку ", "кликни елемент ", "кликни на ",
     ):
         if command.startswith(prefix):
             name = command[len(prefix):].strip()
@@ -191,8 +196,12 @@ def _route_computer(command: str):
                 text = command[len(prefix):].strip()
                 if text:
                     return {"action": "type_text", "target": text}
-    if command.startswith("натисни "):
-        return {"action": "press_key", "target": command[len("натисни "):].strip()}
+    # "натисни Enter", "натисни Ctrl+L" та подібні клавішні команди.
+    # Якщо після "натисни" стоїть "на", це вже UI click і сюди не потрапляє.
+    if command.startswith("натисни ") and not command.startswith("натисни на "):
+        key = command[len("натисни "):].strip()
+        if key and key not in {"кнопку", "елемент"}:
+            return {"action": "press_key", "target": key}
     return None
 
 
